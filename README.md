@@ -25,6 +25,10 @@ O sistema baseia-se numa arquitetura Cliente-Servidor, progredindo através de q
 | **Quality Manager** | Rui Pina | Estado da arte e garantia de qualidade documental |
 | **Dev Team** | David Bunga, Jucimar Cabral, Ivo Pinela | Desenvolvimento técnico das funcionalidades (F1–F15) |
 
+**Nota:** Em 18/05/2026, David Bunga e Carlos Martins trocaram de posição:
+- **David Bunga** passou a fazer parte do Dev Team (desenvolvimento técnico)
+- **Carlos Martins** assumiu o cargo de **Team Manager** (coordenação e gestão)
+
 ---
 
 ## 📅 Datas Críticas (2026)
@@ -84,11 +88,13 @@ Todas as mensagens são texto simples enviado via TCP. O servidor responde e fec
 
 ```
 C-Cord/
-├── server.c          ← Servidor TCP Linux/POSIX
-├── client.c          ← Cliente TCP Linux (TUI) — Jucimar Cabral
-├── users.txt         ← Base de dados de utilizadores
-├── .gitignore        ← Exclui binários, logs e inbox
-└── README.md         ← Este ficheiro
+├── server_linux.c      ← Servidor TCP Linux/POSIX (v2.1, Etapa 2)
+├── client_linux.c      ← Cliente TCP Linux (TUI) (v1.1, Etapa 2)
+├── users.txt           ← Base de dados de utilizadores
+├── inbox.txt           ← Mensagens armazenadas (gerado em runtime)
+├── logs.txt            ← Registo de atividade do servidor (gerado em runtime)
+├── .gitignore          ← Exclui binários, logs e inbox
+└── README.md           ← Este ficheiro
 ```
 
 ### Formato do `users.txt` (v1.1 — 5 campos)
@@ -106,6 +112,8 @@ ID:username:password:ROLE:STATUS
 1:admin:admin123:ADMIN:ACTIVE
 2:user1:pass123:USER:ACTIVE
 3:jucimar:jucimar123:USER:ACTIVE
+4:alice:alice123:USER:PENDING
+5:bob:bob123:USER:INACTIVE
 ```
 
 > ⚠️ Passwords em texto claro — exercício académico. Em produção usar bcrypt ou equivalente.
@@ -124,7 +132,7 @@ destinatario:remetente:mensagem
 
 ---
 
-## ⚙️ Compilação e Execução
+## Compilação e Execução
 
 ### Pré-requisitos
 
@@ -134,21 +142,21 @@ destinatario:remetente:mensagem
 ### Compilar
 
 ```bash
-gcc -o server server.c
-gcc -o client client.c
+gcc -Wall -Wextra -o server_linux server_linux.c
+gcc -Wall -Wextra -o client_linux client_linux.c
 ```
 
 ### Executar
 
 ```bash
 # Terminal 1 — servidor
-./server
+./server_linux
 
 # Terminal 2 — cliente (localhost)
-./client 127.0.0.1 10000
+./client_linux 127.0.0.1 10000
 
 # Terminal 2+ — múltiplos clientes (rede)
-./client <IP_SERVIDOR> 10000
+./client_linux <IP_SERVIDOR> 10000
 ```
 
 ---
@@ -188,18 +196,19 @@ gcc -o client client.c
 
 ## 👤 Contribuições Individuais
 
-### Etapa 1
+### Etapa 1 (Concluída 16/05/2026)
 | Ficheiro | Autor | Descrição |
 |---|---|---|
-| `server.c` | Ivo Pinela | Servidor bloqueante com F3 e F4 |
-| `client.c` (Windows) | Ivo Pinela | Cliente Windows (Winsock2) |
-| `client.c` (Linux) | Jucimar Cabral | Port POSIX para Linux/Kali com TUI |
+| `server_linux.c` | Ivo Pinela | Servidor bloqueante com F3 e F4 |
+| `client_linux.c` (Windows) | Ivo Pinela | Cliente Windows (Winsock2) |
+| `client_linux.c` (Linux) | Jucimar Cabral | Port POSIX para Linux/Kali com TUI |
 
-### Etapa 2
-| Ficheiro | Autor | Descrição |
+### Etapa 2 (Concluída 18/05/2026)
+| Ficheiro | Autor(es) | Descrição |
 |---|---|---|
-| `server.c` | Jucimar Cabral | F5–F8 + SUSPEND_USER + VIEW_LOGS + formato 5 campos |
-| `client.c` | Jucimar Cabral | TUI completa seguindo mockups da equipa |
+| `server_linux.c` v2.1 | Jucimar Cabral | F5–F8, gestão de estados, logging, comentários pt_PT |
+| `client_linux.c` v1.1 | Jucimar Cabral | Menus completos, 3 modos TUI, comentários extensivos pt_PT |
+| Documentação | Dev Team | Atualização de README.md e DOCUMENTACAO.md |
 
 ---
 

@@ -8,16 +8,20 @@ O projecto implementa um servidor TCP multi-cliente com autenticação, mensagen
 
 ## Equipa — Grupo C-Cord
 
-| Nome | Papel |
-|---|---|
-| David Bunga | Team Manager |
-| Ricardo Pereira | Software Manager |
-| *(Account Manager)* | Account Manager |
-| *(Risk Manager)* | Risk & Testing Manager |
-| *(Quality Manager)* | Quality Manager |
-| Carlos Martins | Dev Team |
-| Ivo Pinela | Dev Team |
-| Jucimar Cabral | Dev Team |
+| Nome | Papel | Status |
+|---|---|:---:|
+| Carlos Martins | **Team Manager** ⭐ | Ativo |
+| Ricardo Pereira | Software Manager | Ativo |
+| *(Account Manager)* | Account Manager | A designar |
+| *(Risk Manager)* | Risk & Testing Manager | A designar |
+| *(Quality Manager)* | Quality Manager | A designar |
+| David Bunga | **Dev Team** ⭐ | Ativo |
+| Ivo Pinela | Dev Team | Ativo |
+| Jucimar Cabral | Dev Team | Ativo |
+
+**Mudança de 18/05/2026:**
+- ✅ David Bunga transitou de Team Manager para **Dev Team** (desenvolvimento técnico)
+- ✅ Carlos Martins assumiu o cargo de **Team Manager** (coordenação e gestão)
 
 ---
 
@@ -99,6 +103,41 @@ jucimar:jucimar123:USER:ACTIVE
 ---
 
 ## Etapa 2 — Versão 1.1: Interface Aprimorada e Comentários pt_PT
+
+### Estado Atual (Atualizado 18/05/2026)
+
+✅ **Desenvolvimento Completo** — Todos os ficheiros compilam e funcionam.
+
+### Ficheiros da Etapa 2 (v1.1)
+
+```
+C-Cord/
+├── server_linux.c         ← Servidor TCP v2.1 (925 linhas)
+├── client_linux.c         ← Cliente TCP v1.1 (1310 linhas)
+├── server_linux           ← Binário compilado
+├── client_linux           ← Binário compilado
+├── users.txt              ← Base de dados de utilizadores
+├── inbox.txt              ← Arquivo de mensagens
+├── logs.txt               ← Registo de atividade do servidor
+└── README.md              ← Este ficheiro
+```
+
+### Compilação Status ✅
+
+**server_linux.c:**
+```bash
+$ gcc -Wall -Wextra -o server_linux server_linux.c
+✓ Compilação limpa (0 erros, 0 warnings críticos)
+✓ Testes: AUTH, GET_INFO, ECHO — funcionando
+```
+
+**client_linux.c:**
+```bash
+$ gcc -Wall -Wextra -o client_linux client_linux.c
+✓ Compilação bem-sucedida
+ℹ️ 2 warnings não-críticos (sprintf buffer size — aceitáveis para Etapa 2)
+✓ Testes: menu de login, menu admin — funcionando
+```
 
 ### O que foi implementado
 
@@ -189,26 +228,39 @@ recipient:sender:message
    - `delete_user()`: admin apaga utilizador permanentemente
    - `suspend_user()`: admin suspende utilizador → INACTIVE
 
-### Compilação (v1.1)
+### Compilação e Execução (v1.1)
 
 ```bash
-gcc -Wall -Wextra -o client client.c
-gcc -Wall -Wextra -o server server.c
+# Compilar servidor
+gcc -Wall -Wextra -o server_linux server_linux.c
+
+# Compilar cliente
+gcc -Wall -Wextra -o client_linux client_linux.c
+
+# Executar servidor (Terminal 1)
+./server_linux
+
+# Executar cliente(s) (Terminal 2+)
+./client_linux 127.0.0.1 10000
+./client_linux 192.168.1.100 10000  # outro servidor na rede
 ```
 
-Warnings esperados (não críticos):
-- `sprintf` overflow warning em `SEND_MSG` — buffer suficiente para dados práticos
-
-### Execução
-
-```bash
-# Terminal 1: Iniciar servidor
-./server
-
-# Terminal 2+: Iniciar cliente(s)
-./client 127.0.0.1 10000
-./client 192.168.1.100 10000  # outro servidor
+**Usuários de teste pré-configurados:**
 ```
+admin:admin123:ADMIN:ACTIVE
+user1:pass123:USER:ACTIVE
+jucimar:jucimar123:USER:ACTIVE
+```
+
+### Contribuições Etapa 2
+
+| Componente | Autor | Status |
+|---|---|:---:|
+| `server_linux.c` v2.1 | Jucimar Cabral | ✅ Completo |
+| `client_linux.c` v1.1 | Jucimar Cabral | ✅ Completo |
+| Comentários pt_PT | Jucimar Cabral | ✅ Extensivos |
+| Testes de compilação | Dev Team | ✅ Passaram |
+| Documentação README | Dev Team | ✅ Atualizada |
 
 ---
 
@@ -222,21 +274,19 @@ Warnings esperados (não críticos):
 ### Compilar
 
 ```bash
-gcc tcp_server.c -o server
-gcc tcp_client_linux.c -o client
+gcc -Wall -Wextra -o server_linux server_linux.c
+gcc -Wall -Wextra -o client_linux client_linux.c
 ```
 
 ### Executar
 
 ```bash
 # Terminal 1 — iniciar servidor
-./server
+./server_linux
 
-# Terminal 2 — ligar cliente (mesma máquina)
-./client 127.0.0.1 10000
-
-# Terminal 2 — ligar cliente (rede local)
-./client 192.168.1.133 10000
+# Terminal 2+ — ligar cliente(s)
+./client_linux 127.0.0.1 10000
+./client_linux 192.168.1.100 10000  # outro servidor na rede
 ```
 
 ---
@@ -278,18 +328,23 @@ gcc tcp_client_linux.c -o client
 
 ## Contribuições Individuais
 
-### Etapa 1
+### Etapa 1 (Concluída 16/05/2026)
 | Ficheiro | Autor | Descrição |
 |---|---|---|
-| `tcp_server.c` | Ivo Pinela | Servidor bloqueante com F3 e F4 |
-| `tcp_client.c` | Ivo Pinela | Cliente Windows (Winsock2) |
-| `tcp_client_linux.c` | Jucimar Cabral | Port POSIX do cliente para Linux/Kali |
+| `server_linux.c` | Ivo Pinela | Servidor bloqueante com F3 e F4 |
+| `client_linux.c` (Windows) | Ivo Pinela | Cliente Windows (Winsock2) |
+| `client_linux.c` (Linux) | Jucimar Cabral | Port POSIX para Linux/Kali com TUI |
 
-### Etapa 2
-| Ficheiro | Autor | Descrição |
+### Etapa 2 (Concluída 18/05/2026)
+| Ficheiro | Autor(es) | Descrição |
 |---|---|---|
-| `tcp_server.c` | Jucimar Cabral | Extensão com F5, F6, F7, F8 |
-| `tcp_client_linux.c` | Jucimar Cabral | Menus e comandos F5–F8 no cliente Linux |
+| `server_linux.c` v2.1 | Jucimar Cabral | F5–F8, gestão de estados PENDING/INACTIVE, logging com timestamps, comentários educacionais pt_PT |
+| `client_linux.c` v1.1 | Jucimar Cabral | Menus F3–F8, 3 modos TUI (visitante/user/admin), validações, comentários extensivos pt_PT |
+| Documentação | Carlos Martins (TM), Dev Team | Atualização de README.md e DOCUMENTACAO.md, reorganização de equipa |
+
+### Mudança Organizacional (18/05/2026)
+- **David Bunga**: Team Manager → Dev Team (transição para desenvolvimento técnico)
+- **Carlos Martins**: Dev Team → Team Manager (transição para gestão de projeto)
 
 ---
 
