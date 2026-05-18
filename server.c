@@ -295,7 +295,8 @@ int is_admin(const char* username) {
     char line[256], id[10], u[50], p[50], r[20], s[20];
 
     while (fgets(line, sizeof(line), f)) {
-        if (sscanf(line, "%9[^:]:%49[^:]:%49[^:]:%19[^:]:%19s", id, u, p, r, s) == 5) {
+        if (sscanf(line, "%9[^:]:%49[^:]:%49[^:]:%19[^:]:%19s", id, u, p, r,
+                   s) == 5) {
             /* Verificar se é o utilizador procurado E tem papel ADMIN E está
              * ACTIVE */
             if (strcmp(u, username) == 0 && strcmp(r, "ADMIN") == 0 &&
@@ -356,7 +357,8 @@ void list_all(char* response) {
     int count = 0;
 
     while (fgets(line, sizeof(line), f)) {
-        if (sscanf(line, "%9[^:]:%49[^:]:%49[^:]:%19[^:]:%19s", id, u, p, r, s) == 5) {
+        if (sscanf(line, "%9[^:]:%49[^:]:%49[^:]:%19[^:]:%19s", id, u, p, r,
+                   s) == 5) {
             char entry[128];
             /* Nota: não guardamos a password no output por segurança */
             sprintf(entry, " [%s] %s | Papel: %s | Estado: %s\n", id, u, r, s);
@@ -840,6 +842,12 @@ int main() {
 
             /* Ler dados enviados pelo cliente */
             if (read(client, buffer, BUF_SIZE - 1) > 0) {
+                /* Remover newline do final do buffer */
+                size_t len = strlen(buffer);
+                if (len > 0 && buffer[len - 1] == '\n') {
+                    buffer[len - 1] = '\0';
+                }
+
                 char response[BUF_SIZE] = ""; /* Preparar resposta */
                 char log_msg[BUF_SIZE] = "";  /* Preparar mensagem de log */
                 int log_type = 0; /* Tipo de log: 1=OK, 3=ERRO, 0=INFO */
