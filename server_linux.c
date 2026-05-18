@@ -1,122 +1,181 @@
 /*
  * ============================================================================
- * SERVIDOR TCP C-CORD — VERSÃO 2.0 (Etapa 2: F3, F4, F5, F6, F7, F8)
+ * SERVIDOR TCP C-CORD — VERSÃO 2.1 (Etapa 2: F3–F8)
  * ============================================================================
  *
  * Descrição:
- *   Servidor de rede que implementa um sistema simplificado de chat/forum tipo
- *   Discord. Suporta autenticação, gestão de utilizadores, inbox de mensagens,
- *   e operações administrativas.
+ *   Servidor TCP que implementa o protocolo C-CORD para autenticação,
+ *   gestão de utilizadores, mensageria, e operações administrativas.
+ *   Funciona em modelo bloqueante (sequential) — adequado para Etapa 2.
+ *   Etapa 3+ requer select() ou threads para multiplex.
  *
- * Compilação: gcc tcp_server_v2.c -o server_v2
- * Execução  : ./server_v2
+ * Compilação: gcc -Wall -Wextra -o server_linux server_linux.c
+ * Execução  : ./server_linux
  * Porto     : 10000
  *
- * Bases de Dados (ficheiros):
- *   - users.txt  → armazena utilizadores (username:password:ROLE:STATUS)
- *   - inbox.txt  → armazena mensagens (destinatario:remetente:mensagem)
- *   - logs.txt   → registo de todas as operações
+ * Bases de Dados (ficheiros locais):
+ *   - users.txt  → ID:username:password:ROLE:STATUS (5 campos por linha)
+ *   - inbox.txt  → destinatario:remetente:mensagem (mensagens privadas)
+ *   - logs.txt   → registo completo de todas as operações com timestamp
  *
- * Protocolo de Comandos Suportados:
- *   F3 → AUTH <user> <pass>           : Autentica utilizador
- *   F4 → GET_INFO                     : Obtém informação do servidor
- *   F4 → ECHO <msg>                   : Testa latência (ecoa mensagem)
- *   F5 → LIST_ALL                     : Lista todos os utilizadores
- *   F5 → CHECK_INBOX <user>           : Verifica mensagens de um utilizador
- *   F5 → SEND_MSG <dest> <from> <msg>: Envia mensagem para outro utilizador
- *   F6 → REGISTER <user> <pass>       : Regista novo utilizador (PENDING)
- *   F7 → APPROVE_USER <admin> <user>  : Admin aprova utilizador PENDING
- *   F8 → DELETE_USER <admin> <user>   : Admin apaga utilizador
+ * Protocolo suportado (Etapa 2 — 11 comandos):
+ *   AUTH <user> <pass>             → AUTH_SUCCESS:ADMIN | AUTH_SUCCESS:USER |
+ *                                     AUTH_FAIL | AUTH_PENDING | AUTH_INACTIVE
+ *   GET_INFO                       → versão servidor + uptime + contagem pedidos
+ *   ECHO <msg>                     → "Servidor Ecoa: <msg>" (teste latência)
+ *   LIST_ALL                       → tabela formatada ID|user|ROLE|STATUS
+ *   LIST_PENDING                   → apenas utilizadores com STATUS=PENDING
+ *   CHECK_INBOX <user>             → lista de mensagens para utilizador
+ *   SEND_MSG <dest> <from> <msg>   → MSG_SENT | MSG_FAIL
+ *   REGISTER <user> <pass>         → REGISTER_OK | REGISTER_FAIL
+ *   APPROVE_USER <admin> <target>  → APPROVE_OK | APPROVE_FAIL (PENDING → ACTIVE)
+ *   SUSPEND_USER <admin> <target>  → SUSPEND_OK | SUSPEND_FAIL (alterna ACTIVE ↔ INACTIVE)
+ *   DELETE_USER <admin> <target>   → DELETE_OK | DELETE_FAIL
+ *   VIEW_LOGS <admin>              → últimas 50 linhas de logs.txt
  *
  * ============================================================================
  */
 
 /* ============================================================================
- * CABEÇALHOS E BIBLIOTECAS
+ * CABEÇALHOS E BIBLIOTECAS POSIX
+ * ============================================================================
+ *
+ * Explicação de cada include:
+ *
+ *   - arpa/inet.h      : Funções de conversão (inet_aton, htons, etc.)
+ *   - netinet/in.h     : Estruturas de rede (sockaddr_in, INADDR_ANY)
+ *   - stdio.h          : Input/output (printf, FILE, fopen, etc.)
+ *   - stdlib.h         : Utilitários (exit, malloc, atoi)
+ *   - string.h         : Manipulação de strings (strcmp, strcpy, sprintf)
+ *   - sys/socket.h     : API de sockets (socket, bind, listen, accept, send, recv)
+ *   - sys/types.h      : Tipos POSIX (socklen_t, etc.)
+ *   - time.h           : Funções de tempo (time, localtime, strftime)
+ *   - unistd.h         : Utilitários POSIX (close, read, write, sleep)
+ *
  * ============================================================================
  */
 
-#include <arpa/inet.h>  /* Para inet_ntoa, conversões de endereços */
-#include <netinet/in.h> /* Para estruturas sockaddr_in */
-#include <stdio.h>      /* Para printf, fprintf, FILE */
-#include <stdlib.h>     /* Para malloc, free, exit */
-#include <string.h>     /* Para strcmp, strcpy, memset */
-#include <sys/socket.h> /* Para socket, bind, listen, accept */
-#include <sys/types.h>  /* Para tipos de dados de sistema */
-#include <time.h>       /* Para time, localtime, strftime */
-#include <unistd.h>     /* Para read, write, close, sleep */
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <time.h>
+#include <unistd.h>
 
 /* ============================================================================
- * CONSTANTES DE CONFIGURAÇÃO
+ * CONSTANTES
+ * ============================================================================
+ *
+ * Definições de configuração do servidor:
+ *
+ *   - SERVER_PORT: Porto TCP onde servidor escuta (10000)
+ *   - BUF_SIZE: Tamanho máximo do buffer para comandos e respostas (4096 bytes)
+ *   - USERS_FILE: Nome do ficheiro de base de dados de utilizadores
+ *   - INBOX_FILE: Nome do ficheiro de caixa de entrada (mensagens)
+ *   - LOG_FILE: Nome do ficheiro de registo de atividade
+ *   - MAX_USERS: Limite máximo de utilizadores que podem ser carregados em memória
+ *
  * ============================================================================
  */
 
-#define SERVER_PORT 10000      /* Porto em que o servidor escuta */
-#define BUF_SIZE 2048          /* Tamanho máximo do buffer de dados */
-#define USERS_FILE "users.txt" /* Ficheiro de base de dados de utilizadores */
-#define INBOX_FILE "inbox.txt" /* Ficheiro de base de dados de mensagens */
-#define LOG_FILE "logs.txt"    /* Ficheiro de registos (logs) do servidor */
+#define SERVER_PORT  10000
+#define BUF_SIZE     4096
+#define USERS_FILE   "users.txt"
+#define INBOX_FILE   "inbox.txt"
+#define LOG_FILE     "logs.txt"
+#define MAX_USERS    200
 
 /* ============================================================================
- * VARIÁVEIS GLOBAIS
+ * VARIÁVEIS GLOBAIS (Estado do servidor)
+ * ============================================================================
+ *
+ * Estas variáveis rastreiam o estado global do servidor durante toda
+ * a sua execução:
+ *
+ *   - VERSAO_SERVIDOR: Identificação da versão (ex: "2.1-Etapa2")
+ *   - start_time: Timestamp de quando servidor iniciou (para calcular uptime)
+ *   - total_pedidos: Contador de todos os pedidos processados (útil para métricas)
+ *
  * ============================================================================
  */
 
-const char* VERSAO_SERVIDOR = "2.0-Fase2"; /* Versão actual do servidor */
-time_t start_time; /* Momento em que o servidor iniciou */
+const char *VERSAO_SERVIDOR = "2.1-Etapa2";
+time_t      start_time;
+int         total_pedidos = 0;
 
 /* ============================================================================
  * FUNÇÃO: guardar_log()
  * ============================================================================
  *
  * O que esta função faz:
- *   Regista uma mensagem de log no ficheiro de logs (logs.txt) com timestamp
- *   e imprime a mensagem no terminal com cores ANSI conforme o tipo.
+ *   Guarda uma mensagem no ficheiro de logs com timestamp, e também
+ *   imprime na consola com código de cor ANSI conforme o tipo.
  *
  * Para quê é importante:
- *   Permite ao administrador acompanhar todas as operações do servidor em
- *   tempo real (logins, erros, operações administrativas) e manter histórico
- *   persistente das atividades.
+ *   Auditoria e debugging. Todas as operações ficam registadas.
+ *   Permite admin consultar histórico de ações (VIEW_LOGS).
+ *   Cores facilitam leitura rápida: verde=OK, vermelho=ERRO, ciano=INFO.
  *
  * Parâmetros:
- *   - mensagem: texto a registar
- *   - tipo: 1=SUCESSO (verde), 3=ERRO (vermelho), outro=INFO (ciano)
+ *   - mensagem: texto a guardar (ex: "Login OK: 'admin' (ADMIN)")
+ *   - tipo: 1=OK (verde), 3=ERRO (vermelho), outro=INFO (ciano)
  *
  * Como funciona passo a passo:
- *   1. Abre ficheiro logs.txt em modo append ("a")
- *   2. Obtém data/hora actual com time() e localtime()
- *   3. Formata a data com strftime() no formato "YYYY-MM-DD HH:MM:SS"
- *   4. Escreve "[TIMESTAMP] mensagem" no ficheiro
- *   5. Fecha o ficheiro para libertar recursos
- *   6. Imprime no terminal com cor:
- *      - Verde ([OK])    se tipo == 1
- *      - Vermelho ([ERRO]) se tipo == 3
- *      - Ciano ([INFO])  para outros valores
+ *   1. Abrir ficheiro logs.txt em modo append (adiciona ao fim)
+ *   2. Obter hora/data actual com time() e localtime()
+ *   3. Formatar com strftime() em "YYYY-MM-DD HH:MM:SS"
+ *   4. Escrever linha: "[timestamp] mensagem"
+ *   5. Fechar ficheiro
+ *   6. Imprimir na consola com cor apropriada
  *
  * ============================================================================
  */
-void guardar_log(const char* mensagem, int tipo) {
-    FILE* f = fopen(LOG_FILE, "a"); /* Abrir ficheiro em modo "append" */
+void guardar_log(const char *mensagem, int tipo) {
+    FILE *f = fopen(LOG_FILE, "a");
     if (f) {
-        char data[64];             /* Buffer para guardar data formatada */
-        time_t agora = time(NULL); /* Obter tempo actual em segundos */
-        struct tm* t = localtime(&agora); /* Converter para data/hora legível */
-
-        /* Formatar a data no padrão: 2026-05-15 23:53:20 */
+        char    data[64];
+        time_t  agora = time(NULL);
+        struct tm *t  = localtime(&agora);
         strftime(data, sizeof(data), "%Y-%m-%d %H:%M:%S", t);
-
-        /* Escrever no ficheiro no formato: [TIMESTAMP] mensagem */
         fprintf(f, "[%s] %s\n", data, mensagem);
-        fclose(f); /* Fechar ficheiro após escrever */
+        fclose(f);
     }
+    /* Imprimir na consola com cor */
+    if      (tipo == 1) printf(" \033[1;32m[OK]\033[0m    | %s\n", mensagem);
+    else if (tipo == 3) printf(" \033[1;31m[ERRO]\033[0m  | %s\n", mensagem);
+    else                printf(" \033[1;36m[INFO]\033[0m  | %s\n", mensagem);
+}
 
-    /* Imprimir no terminal com cores ANSI */
-    if (tipo == 1)
-        printf(" \033[1;32m[OK]\033[0m    | %s\n", mensagem);
-    else if (tipo == 3)
-        printf(" \033[1;31m[ERRO]\033[0m  | %s\n", mensagem);
-    else
-        printf(" \033[1;36m[INFO]\033[0m  | %s\n", mensagem);
+/* ============================================================================
+ * FUNÇÃO: proximo_id()
+ * ============================================================================
+ *
+ * O que esta função faz:
+ *   Lê users.txt inteiro, encontra o ID máximo, e devolve ID+1.
+ *   Garante que novos utilizadores recebem ID único auto-incrementado.
+ *
+ * Para quê é importante:
+ *   Evita duplicação de IDs (essencial para identificar utilizadores).
+ *   Mantém arquivo de utilizadores bem organizado.
+ *
+ * Valor de retorno: próximo ID disponível (1 se ficheiro vazio)
+ *
+ * ============================================================================
+ */
+int proximo_id() {
+    FILE *f = fopen(USERS_FILE, "r");
+    if (!f) return 1;
+    char line[256];
+    int  max_id = 0, id = 0;
+    while (fgets(line, sizeof(line), f)) {
+        if (sscanf(line, "%d:", &id) == 1 && id > max_id)
+            max_id = id;
+    }
+    fclose(f);
+    return max_id + 1;
 }
 
 /* ============================================================================
@@ -124,57 +183,32 @@ void guardar_log(const char* mensagem, int tipo) {
  * ============================================================================
  *
  * O que esta função faz:
- *   Desenha a interface de utilizador (TUI) do servidor no terminal com:
+ *   Limpa o terminal e desenha o cabeçalho visual do servidor:
  *   - Logo ASCII do C-CORD
- *   - Estado do servidor (ONLINE)
- *   - Porto em que escuta
- *   - Versão do servidor
- *   - Cabeçalho para secção de atividades em tempo real
+ *   - Versão, status (ONLINE), porto, base de dados
+ *   - Indicação de que começa a feed de atividade
  *
  * Para quê é importante:
- *   Oferece feedback visual ao operador do servidor sobre o estado e
- *   configuração. Melhora a usabilidade e permite monitorizar atividades.
- *
- * Como funciona passo a passo:
- *   1. Limpa o terminal com system("clear")
- *   2. Define cor ciana com código ANSI \033[1;36m
- *   3. Imprime o logo ASCII do C-CORD
- *   4. Reseta a cor com \033[0m
- *   5. Imprime linhas de separação e informações
- *   6. Define cor verde para [ONLINE]
- *   7. Imprime header da secção de atividade (logs em tempo real)
+ *   Feedback visual ao utilizador de que servidor está funcional.
+ *   Fácil verificação de configuração (porto, ficheiro de BD).
  *
  * ============================================================================
  */
 void desenhar_cabecalho_servidor() {
-    system("clear"); /* Limpar terminal */
-
-    printf("\033[1;36m"); /* Definir cor ciana */
+    system("clear");
+    printf("\033[1;36m");
     printf("   ____         ____ ___  ____  ____    \n");
     printf("  / ___|       / ___/ _ \\|  _ \\|  _ \\   \n");
     printf(" | |     ____ | |  | | | | |_) | | | |  \n");
     printf(" | |___ |____|| |__| |_| |  _ <| |_| |  \n");
     printf("  \\____|       \\____\\___/|_| \\_\\____/   \n");
-    printf("\033[0m\n"); /* Resetar cor */
-
-    printf(
-        "======================================================================"
-        "==\n");
-    printf(
-        "         C-CORD SERVER (Etapa 2 — F3/F4/F5/F6/F7/F8)                  "
-        " \n");
-    printf(
-        "======================================================================"
-        "==\n");
-
-    /* Mostrar informações do servidor */
-    printf(
-        " STATUS: \033[1;32mONLINE\033[0m | PORTO: %d | BD: %s | VERSAO: %s\n",
-        SERVER_PORT, USERS_FILE, VERSAO_SERVIDOR);
-
-    printf(
-        "----------------------------------------------------------------------"
-        "--\n");
+    printf("\033[0m\n");
+    printf("======================================================================\n");
+    printf("         C-CORD SERVER v%s (Etapa 2 — F3..F8)                        \n", VERSAO_SERVIDOR);
+    printf("======================================================================\n");
+    printf(" STATUS: \033[1;32mONLINE\033[0m | PORTO: %d | BD: %s\n",
+           SERVER_PORT, USERS_FILE);
+    printf("----------------------------------------------------------------------\n");
     printf(" LIVE FEED DE ATIVIDADE:\n");
 }
 
@@ -183,77 +217,55 @@ void desenhar_cabecalho_servidor() {
  * ============================================================================
  *
  * O que esta função faz:
- *   Valida um par (username, password) contra a base de dados de utilizadores.
- *   Retorna se o utilizador é ADMIN ou USER, ou rejeita se inválido.
- *   Protege utilizadores PENDING contra login.
+ *   Valida as credenciais (username + password) contra users.txt.
+ *   Diferencia entre 4 estados: OK, PENDING, INACTIVE, FAIL.
  *
  * Para quê é importante:
- *   É o núcleo da autenticação (F3). Controla quem pode entrar no sistema.
- *   Diferencia entre ADMIN e USER para aplicar permissões diferentes.
- *   Impede que contas pendentes façam login.
+ *   Core de autenticação. Garante que só utilizadores ACTIVE podem entrar.
+ *   PENDING = aguarda aprovação admin. INACTIVE = suspenso.
  *
  * Parâmetros:
- *   - username: nome do utilizador a validar
- *   - password: palavra-passe a validar
- *   - role: buffer para devolver o papel (ADMIN ou USER)
+ *   - username: nome do utilizador
+ *   - password: password em texto plano (comparação directa)
+ *   - role: OUTPUT — string para guardar ADMIN ou USER (se sucesso)
  *
  * Valor de retorno:
- *    1 = Autenticação bem-sucedida (STATUS=ACTIVE)
- *   -1 = Utilizador PENDING (bloqueado até aprovação)
- *    0 = Credenciais inválidas
+ *    1 = AUTH_SUCCESS (credenciais OK e status ACTIVE)
+ *   -1 = AUTH_PENDING (credenciais OK mas status PENDING)
+ *   -2 = AUTH_INACTIVE (credenciais OK mas status INACTIVE/suspenso)
+ *    0 = AUTH_FAIL (username não existe ou password incorreta)
  *
  * Como funciona passo a passo:
- *   1. Abre ficheiro users.txt em modo leitura ("r")
- *   2. Se falhar, registar erro e devolver 0
- *   3. Loop: ler linha por linha (fgets)
- *   4. Parse cada linha com sscanf no formato: "username:password:ROLE:STATUS"
- *   5. Se encontrar match de username E password:
- *      - Verificar se STATUS é "PENDING" → devolver -1
- *      - Copiar ROLE para o buffer de output → devolver 1
- *   6. Se sair do loop sem encontrar → devolver 0
- *
- * Exemplos:
- *   check_auth("admin", "admin123", role_buf);  → Retorna 1, role_buf="ADMIN"
- *   check_auth("novo", "pass123", role_buf);    → Retorna -1 (PENDING)
- *   check_auth("admin", "wrongpass", role_buf); → Retorna 0
+ *   1. Abrir users.txt em modo leitura
+ *   2. Loop: ler cada linha, fazer parse dos 5 campos
+ *   3. Se username e password coincidem:
+ *      - Fechar ficheiro
+ *      - Verificar status:
+ *        * Se PENDING → retorna -1
+ *        * Se INACTIVE → retorna -2
+ *        * Senão (ACTIVE) → guardar role e retorna 1
+ *   4. Se acabou o ficheiro sem encontrar → retorna 0 (FAIL)
  *
  * ============================================================================
  */
-int check_auth(const char* username, const char* password, char* role) {
-    FILE* f = fopen(USERS_FILE, "r"); /* Abrir base de dados de utilizadores */
-    if (!f) {
-        guardar_log("users.txt nao encontrado!",
-                    3); /* Registar erro se ficheiro não existe */
-        return 0;
-    }
+int check_auth(const char *username, const char *password, char *role) {
+    FILE *f = fopen(USERS_FILE, "r");
+    if (!f) { guardar_log("users.txt nao encontrado!", 3); return 0; }
 
-    char line[256], id[10], u[50], p[50], r[20],
-        s[20]; /* Buffers para ler dados */
-
-    /* Loop: ler linha por linha até fim do ficheiro */
+    char line[256], id[10], u[50], p[50], r[20], s[20];
     while (fgets(line, sizeof(line), f)) {
-        /* Parse da linha no formato: ID:username:password:ROLE:STATUS
-           sscanf devolve o número de campos lidos (deve ser 5) */
-        if (sscanf(line, "%9[^:]:%49[^:]:%49[^:]:%19[^:]:%19s", id, u, p, r,
-                   s) == 5) {
-            /* Se encontrou matching do utilizador E password */
+        if (sscanf(line, "%9[^:]:%49[^:]:%49[^:]:%19[^:]:%19s", id, u, p, r, s) == 5) {
             if (strcmp(u, username) == 0 && strcmp(p, password) == 0) {
                 fclose(f);
-
-                /* Verificar se utilizador está PENDING (aguardando aprovação)
-                 */
-                if (strcmp(s, "PENDING") == 0) {
-                    return -1; /* Utilizador PENDING — não autoriza login */
-                }
-
-                /* Copiar papel para buffer de output */
+                if (strcmp(s, "PENDING")  == 0) return -1;
+                if (strcmp(s, "INACTIVE") == 0) return -2;
                 strcpy(role, r);
-                return 1; /* Autenticação bem-sucedida */
+                return 1;
             }
         }
     }
     fclose(f);
-    return 0; /* Credenciais não encontradas */
+    return 0;
 }
 
 /* ============================================================================
@@ -261,53 +273,32 @@ int check_auth(const char* username, const char* password, char* role) {
  * ============================================================================
  *
  * O que esta função faz:
- *   Verifica se um utilizador é ADMINISTRADOR e está ACTIVE.
- *   Usada para proteger operações administrativas críticas.
+ *   Verifica se um utilizador é admin E está ACTIVE.
+ *   Usada para autorizar operações administrativas (aprovação, eliminação, etc).
  *
  * Para quê é importante:
- *   Impede que utilizadores normais executem operações como:
- *   - Aprovar utilizadores PENDING
- *   - Eliminar contas de utilizadores
- *   - Executar comandos administrativos
+ *   Segurança. Só admins podem fazer operações sensíveis.
+ *   Bloqueia tentativas de utilizadores comuns ou PENDING.
  *
- * Parâmetros:
- *   - username: nome do utilizador a verificar
- *
- * Valor de retorno:
- *   1 = Utilizador é ADMIN e está ACTIVE
- *   0 = Utilizador não é admin ou não está active
- *
- * Como funciona passo a passo:
- *   1. Abrir users.txt
- *   2. Loop: ler linha por linha
- *   3. Parse cada linha (username:password:ROLE:STATUS)
- *   4. Se encontrar utilizador com ROLE="ADMIN" E STATUS="ACTIVE":
- *      - Fechar ficheiro
- *      - Devolver 1
- *   5. Se sair do loop sem encontrar → devolver 0
+ * Valor de retorno: 1 se é admin ACTIVE, 0 senão
  *
  * ============================================================================
  */
-int is_admin(const char* username) {
-    FILE* f = fopen(USERS_FILE, "r");
-    if (!f) return 0; /* Se ficheiro não existe, não é admin */
-
+int is_admin(const char *username) {
+    FILE *f = fopen(USERS_FILE, "r");
+    if (!f) return 0;
     char line[256], id[10], u[50], p[50], r[20], s[20];
-
     while (fgets(line, sizeof(line), f)) {
-        if (sscanf(line, "%9[^:]:%49[^:]:%49[^:]:%19[^:]:%19s", id, u, p, r,
-                   s) == 5) {
-            /* Verificar se é o utilizador procurado E tem papel ADMIN E está
-             * ACTIVE */
+        if (sscanf(line, "%9[^:]:%49[^:]:%49[^:]:%19[^:]:%19s", id, u, p, r, s) == 5) {
             if (strcmp(u, username) == 0 && strcmp(r, "ADMIN") == 0 &&
                 strcmp(s, "ACTIVE") == 0) {
                 fclose(f);
-                return 1; /* É administrador autorizado */
+                return 1;
             }
         }
     }
     fclose(f);
-    return 0; /* Não é administrador */
+    return 0;
 }
 
 /* ============================================================================
@@ -315,60 +306,89 @@ int is_admin(const char* username) {
  * ============================================================================
  *
  * O que esta função faz:
- *   Lista todos os utilizadores registados no sistema.
- *   Mostra: username, papel (ADMIN/USER), estado (ACTIVE/PENDING).
- *   Não mostra passwords por razões de segurança.
+ *   Lista todos os utilizadores em formato tabela formatada com linhas
+ *   separadoras e alinhamento de colunas.
  *
- * Para quê é importante:
- *   Permite visualizar quem está registado e qual o seu estado.
- *   Útil para administradores gerem o sistema.
- *
- * Parâmetros:
- *   - response: buffer para guardar a resposta a enviar ao cliente
- *
- * Como funciona passo a passo:
- *   1. Abrir users.txt
- *   2. Se não existe, devolver mensagem de erro
- *   3. Inicializar response com cabeçalho da lista
- *   4. Loop: ler linha por linha
- *   5. Parse cada linha (username:password:ROLE:STATUS)
- *   6. Para cada utilizador, construir entrada: "[nº] username | Papel: X |
- * Estado: Y"
- *   7. Concatenar entrada à resposta final
- *   8. Se lista vazia, adicionar "(sem utilizadores)"
- *
- * Exemplo de output:
+ * Saída formatada:
  *   === UTILIZADORES REGISTADOS ===
- *    [1] admin | Papel: ADMIN | Estado: ACTIVE
- *    [2] user1 | Papel: USER | Estado: ACTIVE
- *    [3] novo | Papel: USER | Estado: PENDING
+ *    ID  | Utilizador       | Funcao  | Estado
+ *   -----+------------------+---------+----------
+ *     1  | admin            | ADMIN   | ACTIVE
+ *     2  | user1            | USER    | PENDING
+ *    ...
+ *   -----
+ *    Total: N registo(s)
  *
  * ============================================================================
  */
-void list_all(char* response) {
-    FILE* f = fopen(USERS_FILE, "r");
-    if (!f) {
-        strcpy(response, "ERRO: Ficheiro de utilizadores nao encontrado.");
-        return;
-    }
+void list_all(char *response) {
+    FILE *f = fopen(USERS_FILE, "r");
+    if (!f) { strcpy(response, "ERRO: Ficheiro de utilizadores nao encontrado."); return; }
 
-    strcpy(response, "=== UTILIZADORES REGISTADOS ===\n");
+    strcpy(response,
+           "=== UTILIZADORES REGISTADOS ===\n"
+           " ID  | Utilizador       | Funcao  | Estado   \n"
+           "-----+------------------+---------+----------\n");
+
     char line[256], id[10], u[50], p[50], r[20], s[20];
-    int count = 0;
+    int  total = 0;
 
     while (fgets(line, sizeof(line), f)) {
-        if (sscanf(line, "%9[^:]:%49[^:]:%49[^:]:%19[^:]:%19s", id, u, p, r,
-                   s) == 5) {
+        if (sscanf(line, "%9[^:]:%49[^:]:%49[^:]:%19[^:]:%19s", id, u, p, r, s) == 5) {
             char entry[128];
-            /* Nota: não guardamos a password no output por segurança */
-            sprintf(entry, " [%s] %s | Papel: %s | Estado: %s\n", id, u, r, s);
+            sprintf(entry, " %-3s | %-16s | %-7s | %s\n", id, u, r, s);
             strncat(response, entry, BUF_SIZE - strlen(response) - 1);
+            total++;
         }
     }
-    /* Se nenhum utilizador encontrado */
-    if (count == 0)
-        strncat(response, " (sem utilizadores)\n",
+    fclose(f);
+
+    char footer[64];
+    sprintf(footer, "-----\n Total: %d registo(s)\n", total);
+    strncat(response, footer, BUF_SIZE - strlen(response) - 1);
+}
+
+/* ============================================================================
+ * FUNÇÃO: list_pending()
+ * ============================================================================
+ *
+ * O que esta função faz:
+ *   Lista apenas utilizadores com STATUS=PENDING (aguardando aprovação admin).
+ *
+ * ============================================================================
+ */
+void list_pending(char *response) {
+    FILE *f = fopen(USERS_FILE, "r");
+    if (!f) { strcpy(response, "ERRO: Ficheiro nao encontrado."); return; }
+
+    strcpy(response,
+           "=== UTILIZADORES PENDENTES ===\n"
+           " ID  | Utilizador       | Estado   \n"
+           "-----+------------------+----------\n");
+
+    char line[256], id[10], u[50], p[50], r[20], s[20];
+    int  total = 0;
+
+    while (fgets(line, sizeof(line), f)) {
+        if (sscanf(line, "%9[^:]:%49[^:]:%49[^:]:%19[^:]:%19s", id, u, p, r, s) == 5) {
+            if (strcmp(s, "PENDING") == 0) {
+                char entry[128];
+                sprintf(entry, " %-3s | %-16s | %s\n", id, u, s);
+                strncat(response, entry, BUF_SIZE - strlen(response) - 1);
+                total++;
+            }
+        }
+    }
+    fclose(f);
+
+    if (total == 0)
+        strncat(response, " (sem utilizadores pendentes)\n",
                 BUF_SIZE - strlen(response) - 1);
+    else {
+        char footer[64];
+        sprintf(footer, "-----\n Total pendentes: %d\n", total);
+        strncat(response, footer, BUF_SIZE - strlen(response) - 1);
+    }
 }
 
 /* ============================================================================
@@ -376,58 +396,26 @@ void list_all(char* response) {
  * ============================================================================
  *
  * O que esta função faz:
- *   Lê e devolve todas as mensagens destinadas a um utilizador específico.
- *   As mensagens são lidas do ficheiro inbox.txt.
+ *   Devolve todas as mensagens destinadas a um utilizador específico.
+ *   Formato: "[N] De: remetente → mensagem"
  *
- * Para quê é importante:
- *   Implementa sistema de mensageria assíncrona entre utilizadores.
- *   Um utilizador pode deixar mensagem para outro mesmo que offline.
- *   Permite consultar a caixa de entrada.
- *
- * Parâmetros:
- *   - username: nome do utilizador cujas mensagens procuramos
- *   - response: buffer para guardar as mensagens encontradas
- *
- * Formato do inbox.txt:
- *   destinatario:remetente:mensagem
- *   Exemplo: user1:admin:Olá user1!
- *
- * Como funciona passo a passo:
- *   1. Tentar abrir ficheiro inbox.txt
- *   2. Se não existe, devolver "(sem mensagens)"
- *   3. Inicializar response com cabeçalho
- *   4. Loop: ler linha por linha
- *   5. Remover '\n' do fim de cada linha
- *   6. Parse no formato: "dest:from:msg"
- *   7. Se destinatário matches username, incluir na resposta
- *   8. Formatação: "[nº] De: remetente → mensagem"
- *   9. Se nenhuma mensagem, adicionar "(sem mensagens novas)"
- *
- * Exemplo de output:
- *   === CAIXA DE ENTRADA DE admin ===
- *    [1] De: user1 → Olá admin!
- *    [2] De: jucimar → Bom dia!
+ * Nota importante:
+ *   inbox.txt NUNCA deleta mensagens — todas ficam persistidas.
+ *   Modelo assíncrono (Etapa 2). Etapa 3+ poderia usar estado "lida".
  *
  * ============================================================================
  */
-void check_inbox(const char* username, char* response) {
-    FILE* f = fopen(INBOX_FILE, "r");
-    if (!f) {
-        strcpy(response, "A sua caixa de entrada está vazia.");
-        return;
-    }
+void check_inbox(const char *username, char *response) {
+    FILE *f = fopen(INBOX_FILE, "r");
+    if (!f) { strcpy(response, "A sua caixa de entrada esta vazia."); return; }
 
     sprintf(response, "=== CAIXA DE ENTRADA DE %s ===\n", username);
     char line[512], dest[50], from[50], msg[400];
-    int count = 0;
+    int  count = 0;
 
     while (fgets(line, sizeof(line), f)) {
-        /* Remover newline do fim da linha */
         line[strcspn(line, "\n")] = 0;
-
-        /* Parse no formato: dest:from:msg */
         if (sscanf(line, "%49[^:]:%49[^:]:%399[^\n]", dest, from, msg) == 3) {
-            /* Se destinatário é o utilizador procurado */
             if (strcmp(dest, username) == 0) {
                 char entry[512];
                 sprintf(entry, " [%d] De: %s → %s\n", ++count, from, msg);
@@ -437,7 +425,6 @@ void check_inbox(const char* username, char* response) {
     }
     fclose(f);
 
-    /* Se nenhuma mensagem encontrada */
     if (count == 0)
         strncat(response, " (sem mensagens novas)\n",
                 BUF_SIZE - strlen(response) - 1);
@@ -448,44 +435,39 @@ void check_inbox(const char* username, char* response) {
  * ============================================================================
  *
  * O que esta função faz:
- *   Armazena uma mensagem no ficheiro inbox.txt para entrega futura.
- *   A mensagem fica guardada até o destinatário a ler.
+ *   Envia uma mensagem privada. Verifica se destinatário existe e
+ *   guarda a mensagem no ficheiro inbox.txt.
  *
- * Para quê é importante:
- *   Permite mensageria assíncrona entre utilizadores.
- *   Os utilizadores podem trocar mensagens mesmo que não estejam online
- *   simultaneamente.
- *
- * Parâmetros:
- *   - dest: utilizador destinatário
- *   - from: utilizador remetente
- *   - msg: conteúdo da mensagem
- *   - response: buffer para devolver confirmação
- *
- * Como funciona passo a passo:
- *   1. Abrir inbox.txt em modo append ("a") para adicionar nova linha
- *   2. Escrever linha no formato: "dest:from:msg"
- *   3. Fechar ficheiro
- *   4. Se bem-sucedido, devolver: "MSG_SENT: Mensagem entregue..."
- *   5. Se erro, devolver: "ERRO: Nao foi possivel..."
- *
- * Nota: As mensagens nunca são removidas do inbox.txt. Permanecem
- *       guardadas para histórico.
+ * Verificações de segurança:
+ *   - Destinatário deve existir em users.txt
+ *   - Se não existir, retorna MSG_FAIL com motivo
+ *   - Não verifica se remetente é válido (cliente tem responsabilidade)
  *
  * ============================================================================
  */
-void send_msg(const char* dest, const char* from, const char* msg,
-              char* response) {
-    FILE* f = fopen(INBOX_FILE, "a"); /* Abrir em append para adicionar */
-    if (!f) {
-        strcpy(response, "ERRO: Nao foi possivel guardar mensagem.");
+void send_msg(const char *dest, const char *from, const char *msg, char *response) {
+    /* Verificar se destinatário existe */
+    FILE *f = fopen(USERS_FILE, "r");
+    int   found = 0;
+    if (f) {
+        char line[256], id[10], u[50], p[50], r[20], s[20];
+        while (fgets(line, sizeof(line), f)) {
+            if (sscanf(line, "%9[^:]:%49[^:]:%49[^:]:%19[^:]:%19s", id, u, p, r, s) == 5) {
+                if (strcmp(u, dest) == 0) { found = 1; break; }
+            }
+        }
+        fclose(f);
+    }
+    if (!found) {
+        sprintf(response, "MSG_FAIL: Utilizador '%s' nao encontrado.", dest);
         return;
     }
 
-    /* Escrever mensagem no formato: destinatario:remetente:mensagem */
+    /* Guardar mensagem em inbox.txt */
+    f = fopen(INBOX_FILE, "a");
+    if (!f) { strcpy(response, "ERRO: Nao foi possivel guardar mensagem."); return; }
     fprintf(f, "%s:%s:%s\n", dest, from, msg);
     fclose(f);
-
     sprintf(response, "MSG_SENT: Mensagem entregue na caixa de %s.", dest);
 }
 
@@ -494,66 +476,43 @@ void send_msg(const char* dest, const char* from, const char* msg,
  * ============================================================================
  *
  * O que esta função faz:
- *   Regista um novo utilizador com estado PENDING (aguardando aprovação).
- *   O utilizador PENDING não consegue fazer login até admin o aprovar.
+ *   Cria novo utilizador com:
+ *   - ID auto-incrementado
+ *   - Role fixo: USER (não admin)
+ *   - Status: PENDING (aguarda aprovação admin antes de poder login)
  *
- * Para quê é importante:
- *   Permite qualquer pessoa registar-se, mas protege o sistema requerendo
- *   aprovação de um administrador antes de permitir acesso.
- *   Sistema de segurança para evitar criação descontrolada de contas.
- *
- * Parâmetros:
- *   - username: nome desejado do novo utilizador
- *   - password: palavra-passe
- *   - response: buffer para devolver resultado (sucesso ou erro)
- *
- * Como funciona passo a passo:
- *   1. Verificar se utilizador já existe (lendo users.txt)
- *   2. Se existe, devolver erro: "REGISTER_FAIL: Utilizador ja existe."
- *   3. Se não existe, abrir users.txt em append ("a")
- *   4. Escrever nova linha: "username:password:USER:PENDING"
- *   5. Fechar ficheiro
- *   6. Devolver: "REGISTER_OK: Utilizador registado. Aguarda aprovacao..."
- *
- * Nota: O papel é sempre "USER" para novos utilizadores. Apenas admin
- *       pode ser criado manualmente ou editando users.txt.
+ * Verificações:
+ *   - Username não pode estar duplicado
+ *   - Se duplicado, retorna REGISTER_FAIL com motivo
  *
  * ============================================================================
  */
-void register_user(const char* username, const char* password, char* response) {
-    /* Verificar se o utilizador já existe */
-    FILE* f = fopen(USERS_FILE, "r");
+void register_user(const char *username, const char *password, char *response) {
+    /* Verificar duplicado */
+    FILE *f = fopen(USERS_FILE, "r");
     if (f) {
-        char line[256], u[50];
+        char line[256], id[10], u[50];
         while (fgets(line, sizeof(line), f)) {
-            if (sscanf(line, "%49[^:]", u) == 1) {
-                /* Se encontrar utilizador com mesmo nome */
+            if (sscanf(line, "%9[^:]:%49[^:]", id, u) >= 2) {
                 if (strcmp(u, username) == 0) {
                     fclose(f);
                     strcpy(response, "REGISTER_FAIL: Utilizador ja existe.");
-                    return; /* Sair — não permitir duplicatas */
+                    return;
                 }
             }
         }
         fclose(f);
     }
 
-    /* Utilizador não existe — adicionar novo */
-    f = fopen(USERS_FILE, "a"); /* Abrir em append */
-    if (!f) {
-        strcpy(response,
-               "ERRO: Nao foi possivel aceder ao ficheiro de utilizadores.");
-        return;
-    }
-
-    /* Escrever nova linha: username:password:USER:PENDING */
-    fprintf(f, "%s:%s:USER:PENDING\n", username, password);
+    /* Criar novo registo com próximo ID */
+    int novo_id = proximo_id();
+    f = fopen(USERS_FILE, "a");
+    if (!f) { strcpy(response, "ERRO: Nao foi possivel aceder ao ficheiro."); return; }
+    fprintf(f, "%d:%s:%s:USER:PENDING\n", novo_id, username, password);
     fclose(f);
-
     sprintf(response,
-            "REGISTER_OK: Utilizador '%s' registado. Aguarda aprovacao do "
-            "administrador.",
-            username);
+            "REGISTER_OK: Utilizador '%s' registado (ID=%d). Aguarda aprovacao do administrador.",
+            username, novo_id);
 }
 
 /* ============================================================================
@@ -561,97 +520,116 @@ void register_user(const char* username, const char* password, char* response) {
  * ============================================================================
  *
  * O que esta função faz:
- *   Um administrador aprova um utilizador PENDING, alterando estado para
- *   ACTIVE. Só depois o utilizador consegue fazer login.
+ *   Admin aprova utilizador PENDING, mudando status para ACTIVE.
+ *   Só depois pode fazer login com sucesso.
  *
- * Para quê é importante:
- *   Implementa controlo de aprovação administrativo.
- *   Protege o sistema filtrando utilizadores permitindo acesso controlado.
- *
- * Parâmetros:
- *   - admin_user: nome do admin que aprova
- *   - target: nome do utilizador a aprovar
- *   - response: buffer para devolver resultado
- *
- * Como funciona passo a passo:
- *   1. Verificar se admin_user tem permissões admin (is_admin())
- *   2. Se não é admin, devolver erro
- *   3. Ler todo o ficheiro users.txt para memória (array de linhas)
- *   4. Reabrir users.txt em modo escrita ("w") — apaga conteúdo anterior
- *   5. Loop: reescrever cada linha
- *   6. Se encontrar linha com target E status=PENDING:
- *      - Escrever: "username:password:ROLE:ACTIVE" (mudando PENDING→ACTIVE)
- *      - Marcar como encontrado
- *   7. Outras linhas: reescrever como estavam
- *   8. Fechar ficheiro
- *   9. Se encontrou e modificou, devolver sucesso
- *   10. Se não encontrou, devolver: "Utilizador não encontrado ou já activo"
- *
- * Nota: Esta operação reescreve o ficheiro inteiro (modelo sequencial,
- *       não é eficiente para muitos utilizadores, mas é simples e adequado
- *       para sistemas pequenos).
+ * Verificações:
+ *   - Só admin pode executar
+ *   - Target deve existir e estar em estado PENDING
  *
  * ============================================================================
  */
-void approve_user(const char* admin_user, const char* target, char* response) {
-    /* Verificar se quem aprova tem permissões admin */
+void approve_user(const char *admin_user, const char *target, char *response) {
     if (!is_admin(admin_user)) {
         strcpy(response, "APPROVE_FAIL: Sem permissoes de administrador.");
         return;
     }
 
-    FILE* f = fopen(USERS_FILE, "r");
-    if (!f) {
-        strcpy(response, "ERRO: Ficheiro de utilizadores nao encontrado.");
-        return;
-    }
+    FILE *f = fopen(USERS_FILE, "r");
+    if (!f) { strcpy(response, "ERRO: Ficheiro nao encontrado."); return; }
 
-    /* Ler todo o ficheiro para memória (máximo 100 utilizadores) */
-    char lines[100][256];
-    int count = 0;
-    int found = 0;
-
-    while (fgets(lines[count], sizeof(lines[count]), f) && count < 100) {
+    char lines[MAX_USERS][256];
+    int  count = 0, found = 0;
+    while (fgets(lines[count], sizeof(lines[count]), f) && count < MAX_USERS)
         count++;
-    }
     fclose(f);
 
-    /* Reescrever o ficheiro com status actualizado */
-    f = fopen(USERS_FILE, "w"); /* Modo "w" apaga o ficheiro anterior */
-    if (!f) {
-        strcpy(response, "ERRO: Nao foi possivel actualizar ficheiro.");
-        return;
-    }
+    f = fopen(USERS_FILE, "w");
+    if (!f) { strcpy(response, "ERRO: Nao foi possivel actualizar ficheiro."); return; }
 
     for (int i = 0; i < count; i++) {
-        char u[50], p[50], r[20], s[20];
+        char id[10], u[50], p[50], r[20], s[20];
+        lines[i][strcspn(lines[i], "\n")] = 0;
 
-        if (sscanf(lines[i], "%49[^:]:%49[^:]:%19[^:]:%19s", u, p, r, s) == 4) {
-            /* Se é o utilizador a aprovar E está PENDING */
+        if (sscanf(lines[i], "%9[^:]:%49[^:]:%49[^:]:%19[^:]:%19s", id, u, p, r, s) == 5) {
             if (strcmp(u, target) == 0 && strcmp(s, "PENDING") == 0) {
-                /* Reescrever com ACTIVE em vez de PENDING */
-                fprintf(f, "%s:%s:%s:ACTIVE\n", u, p, r);
+                fprintf(f, "%s:%s:%s:%s:ACTIVE\n", id, u, p, r);
                 found = 1;
             } else {
-                /* Reescrever linha como estava */
                 fprintf(f, "%s\n", lines[i]);
             }
-        } else {
-            /* Linha mal formada — preservar como estava */
+        } else if (strlen(lines[i]) > 0) {
             fprintf(f, "%s\n", lines[i]);
         }
     }
     fclose(f);
 
     if (found)
-        sprintf(response,
-                "APPROVE_OK: Utilizador '%s' aprovado e agora pode autenticar.",
-                target);
+        sprintf(response, "APPROVE_OK: Utilizador '%s' aprovado. Pode agora autenticar.", target);
     else
-        sprintf(
-            response,
-            "APPROVE_FAIL: Utilizador '%s' nao encontrado ou ja esta activo.",
-            target);
+        sprintf(response, "APPROVE_FAIL: Utilizador '%s' nao encontrado ou ja esta activo.", target);
+}
+
+/* ============================================================================
+ * FUNÇÃO: suspend_user()
+ * ============================================================================
+ *
+ * O que esta função faz:
+ *   Admin alterna status de um utilizador entre ACTIVE ↔ INACTIVE.
+ *   Utilizador INACTIVE não consegue fazer login (mesmo com credenciais OK).
+ *
+ * Restrições de segurança:
+ *   - Admin não consegue suspender a si próprio
+ *   - Utilizadores PENDING não podem ser suspensos
+ *
+ * ============================================================================
+ */
+void suspend_user(const char *admin_user, const char *target, char *response) {
+    if (!is_admin(admin_user)) {
+        strcpy(response, "SUSPEND_FAIL: Sem permissoes de administrador.");
+        return;
+    }
+    if (strcmp(admin_user, target) == 0) {
+        strcpy(response, "SUSPEND_FAIL: Nao e possivel suspender a propria conta.");
+        return;
+    }
+
+    FILE *f = fopen(USERS_FILE, "r");
+    if (!f) { strcpy(response, "ERRO: Ficheiro nao encontrado."); return; }
+
+    char lines[MAX_USERS][256];
+    int  count = 0, found = 0;
+    while (fgets(lines[count], sizeof(lines[count]), f) && count < MAX_USERS)
+        count++;
+    fclose(f);
+
+    f = fopen(USERS_FILE, "w");
+    if (!f) { strcpy(response, "ERRO: Nao foi possivel actualizar ficheiro."); return; }
+
+    char novo_estado[20] = "";
+    for (int i = 0; i < count; i++) {
+        char id[10], u[50], p[50], r[20], s[20];
+        lines[i][strcspn(lines[i], "\n")] = 0;
+
+        if (sscanf(lines[i], "%9[^:]:%49[^:]:%49[^:]:%19[^:]:%19s", id, u, p, r, s) == 5) {
+            if (strcmp(u, target) == 0 && strcmp(s, "PENDING") != 0) {
+                const char *ns = (strcmp(s, "ACTIVE") == 0) ? "INACTIVE" : "ACTIVE";
+                fprintf(f, "%s:%s:%s:%s:%s\n", id, u, p, r, ns);
+                strcpy(novo_estado, ns);
+                found = 1;
+            } else {
+                fprintf(f, "%s\n", lines[i]);
+            }
+        } else if (strlen(lines[i]) > 0) {
+            fprintf(f, "%s\n", lines[i]);
+        }
+    }
+    fclose(f);
+
+    if (found)
+        sprintf(response, "SUSPEND_OK: Estado de '%s' alterado para %s.", target, novo_estado);
+    else
+        sprintf(response, "SUSPEND_FAIL: Utilizador '%s' nao encontrado ou esta PENDING.", target);
 }
 
 /* ============================================================================
@@ -659,93 +637,86 @@ void approve_user(const char* admin_user, const char* target, char* response) {
  * ============================================================================
  *
  * O que esta função faz:
- *   Um administrador remove/deleta um utilizador do sistema.
- *   O utilizador é removido do users.txt e não consegue mais fazer login.
+ *   Admin remove utilizador permanentemente da base de dados.
+ *   Utilizador e todas as suas dados são apagados.
  *
- * Para quê é importante:
- *   Permite limpeza do sistema e remoção de contas indesejadas.
- *   Fornecida apenas a admin para proteger integridade das contas.
- *
- * Parâmetros:
- *   - admin_user: nome do admin que remove
- *   - target: nome do utilizador a remover
- *   - response: buffer para devolver resultado
- *
- * Protecções:
- *   - Verifica se admin_user é realmente admin
- *   - Impede que admin se delete a si próprio
- *
- * Como funciona passo a passo:
- *   1. Verificar permissões admin
- *   2. Verificar se target não é admin (protecção)
- *   3. Ler todo users.txt para memória
- *   4. Reabrir users.txt em modo "w" (escrever)
- *   5. Loop: reescrever linhas, EXCEPTO a linha do target
- *   6. Se encontrou e removeu, devolver sucesso
- *   7. Se não encontrou, devolver "Utilizador não encontrado"
- *
- * Nota: A remoção é permanente. O utilizador perde acesso e todas as
- *       suas credenciais são eliminadas.
+ * Restrições:
+ *   - Admin não consegue apagar a si próprio
  *
  * ============================================================================
  */
-void delete_user(const char* admin_user, const char* target, char* response) {
-    /* Verificar se quem remove tem permissões admin */
+void delete_user(const char *admin_user, const char *target, char *response) {
     if (!is_admin(admin_user)) {
         strcpy(response, "DELETE_FAIL: Sem permissoes de administrador.");
         return;
     }
-
-    /* Protecção: admin não se pode remover a si próprio */
     if (strcmp(admin_user, target) == 0) {
-        strcpy(response,
-               "DELETE_FAIL: Nao e possivel apagar a propria conta de "
-               "administrador.");
+        strcpy(response, "DELETE_FAIL: Nao e possivel apagar a propria conta de administrador.");
         return;
     }
 
-    FILE* f = fopen(USERS_FILE, "r");
-    if (!f) {
-        strcpy(response, "ERRO: Ficheiro nao encontrado.");
-        return;
-    }
+    FILE *f = fopen(USERS_FILE, "r");
+    if (!f) { strcpy(response, "ERRO: Ficheiro nao encontrado."); return; }
 
-    /* Ler todo o ficheiro para memória */
-    char lines[100][256];
-    int count = 0, found = 0;
-
-    while (fgets(lines[count], sizeof(lines[count]), f) && count < 100) {
+    char lines[MAX_USERS][256];
+    int  count = 0, found = 0;
+    while (fgets(lines[count], sizeof(lines[count]), f) && count < MAX_USERS) {
         lines[count][strcspn(lines[count], "\n")] = 0;
         count++;
     }
     fclose(f);
 
-    /* Reescrever ficheiro SEM a linha do utilizador a remover */
     f = fopen(USERS_FILE, "w");
-    if (!f) {
-        strcpy(response, "ERRO: Nao foi possivel actualizar ficheiro.");
-        return;
-    }
+    if (!f) { strcpy(response, "ERRO: Nao foi possivel actualizar ficheiro."); return; }
 
     for (int i = 0; i < count; i++) {
-        char u[50];
-
-        if (sscanf(lines[i], "%49[^:]", u) == 1 && strcmp(u, target) == 0) {
-            /* Saltar esta linha — é o utilizador a remover */
+        char id[10], u[50];
+        if (sscanf(lines[i], "%9[^:]:%49[^:]", id, u) >= 2 && strcmp(u, target) == 0) {
             found = 1;
-        } else {
-            /* Reescrever linha (não é a linha a remover) */
+        } else if (strlen(lines[i]) > 0) {
             fprintf(f, "%s\n", lines[i]);
         }
     }
     fclose(f);
 
     if (found)
-        sprintf(response, "DELETE_OK: Utilizador '%s' removido do sistema.",
-                target);
+        sprintf(response, "DELETE_OK: Utilizador '%s' removido do sistema.", target);
     else
-        sprintf(response, "DELETE_FAIL: Utilizador '%s' nao encontrado.",
-                target);
+        sprintf(response, "DELETE_FAIL: Utilizador '%s' nao encontrado.", target);
+}
+
+/* ============================================================================
+ * FUNÇÃO: view_logs()
+ * ============================================================================
+ *
+ * O que esta função faz:
+ *   Admin consulta ficheiro de logs. Devolve últimas 50 linhas.
+ *
+ * Verificações:
+ *   - Só admin pode aceder
+ *   - Se ficheiro vazio/inexistente, mostra mensagem apropriada
+ *
+ * ============================================================================
+ */
+void view_logs(const char *admin_user, char *response) {
+    if (!is_admin(admin_user)) {
+        strcpy(response, "LOGS_FAIL: Sem permissoes de administrador.");
+        return;
+    }
+    FILE *f = fopen(LOG_FILE, "r");
+    if (!f) { strcpy(response, "=== LOGS ===\n (ficheiro vazio ou inexistente)\n"); return; }
+
+    strcpy(response, "=== REGISTO DE ATIVIDADE ===\n");
+    char line[256];
+    int  count = 0;
+    char buffer[200][256];
+    while (fgets(line, sizeof(line), f) && count < 200)
+        strcpy(buffer[count++], line);
+    fclose(f);
+
+    int start = (count > 50) ? count - 50 : 0;
+    for (int i = start; i < count; i++)
+        strncat(response, buffer[i], BUF_SIZE - strlen(response) - 1);
 }
 
 /* ============================================================================
@@ -753,247 +724,202 @@ void delete_user(const char* admin_user, const char* target, char* response) {
  * ============================================================================
  *
  * O que esta função faz:
- *   Motor principal do servidor. Inicializa socket TCP, escuta ligações,
- *   aceita clientes e processa comandos em modo sequencial/bloqueante.
- *
- * Para quê é importante:
- *   Ponto de entrada do programa. Controla todo o ciclo de vida do servidor.
- *
- * Modelo de funcionamento (Etapa 2 — sequencial/bloqueante):
+ *   Loop infinito do servidor:
  *   1. Criar socket TCP
- *   2. Associar ao porto 10000 (bind)
- *   3. Escutar para ligações (listen)
- *   4. Loop infinito:
- *      a) Aceitar cliente (accept) — BLOQUEIA até ter ligação
- *      b) Ler comando do cliente (read)
- *      c) Processar comando (IF/ELSE para cada tipo)
- *      d) Enviar resposta (write)
- *      e) Fechar ligação (close)
- *      f) Voltar ao passo a) para aceitar próximo cliente
+ *   2. Bind ao INADDR_ANY (qualquer interface) e SERVER_PORT
+ *   3. Listen para conexões
+ *   4. Accept nova conexão (BLOQUEIA até cliente conectar)
+ *   5. Ler comando TCP
+ *   6. Processar comando de acordo com protocolo
+ *   7. Enviar resposta
+ *   8. Fechar conexão e voltar ao passo 4
  *
- * Notas sobre eficiência:
- *   - Modelo sequencial: só trata um cliente de cada vez
- *   - Se tiver 2 clientes simultâneos, 1 fica em espera
- *   - Adequado para Etapa 2 (sistema pequeno)
- *   - Para produção, usar threads ou async (Etapa 3+)
+ * Fluxo de sockets TCP:
+ *   - socket(): criar descritor de socket
+ *   - setsockopt(): permitir reusar porto rapidamente
+ *   - bind(): associar socket ao porto 10000
+ *   - listen(): ativar modo listen (aceitar conexões)
+ *   - accept(): BLOQUEIA até nova conexão TCP chegar
+ *   - read(): BLOQUEIA até dados serem recebidos
+ *   - escrever resposta com write()
+ *   - close(): fechar socket da conexão (main socket fica aberto)
  *
- * Comandos suportados (processados no loop):
- *   - AUTH, GET_INFO, ECHO, LIST_ALL, CHECK_INBOX
- *   - SEND_MSG, REGISTER, APPROVE_USER, DELETE_USER
- *   - Qualquer outro comando → resposta "CMD_INVALID"
+ * Protocolo: modelo sequencial (bloqueante)
+ *   - Etapa 2: apenas 1 cliente por vez
+ *   - Etapa 3+: usar select() ou threads para multiplex
  *
  * ============================================================================
  */
 int main() {
-    int fd, client;          /* fd=socket servidor, client=socket cliente */
-    struct sockaddr_in addr; /* Estrutura para endereço do servidor */
-    char buffer[BUF_SIZE];   /* Buffer para dados recebidos */
+    int fd, client;
+    struct sockaddr_in addr;
+    char buffer[BUF_SIZE];
 
-    start_time = time(NULL); /* Registar momento de inicialização */
+    start_time = time(NULL);
 
-    /* PASSO 1: Criar socket TCP
-     * AF_INET        = IPv4
-     * SOCK_STREAM    = TCP (conexão garantida)
-     * 0              = protocolo por defeito
-     */
+    /* PASSO 1: Criar socket TCP */
     fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) { perror("socket"); exit(-1); }
 
-    /* SO_REUSEADDR permite reutilizar porta após restart (evita "Address
-     * already in use") */
+    /* PASSO 2: Permitir reusar porto (evita "Address already in use") */
     int opt = 1;
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
-    /* PASSO 2: Preparar estrutura de endereço
-     * - Família: IPv4 (AF_INET)
-     * - Endereço: qualquer interface (INADDR_ANY = 0.0.0.0)
-     * - Porto: 10000 (convertido para big-endian com htons)
-     */
-    addr.sin_family = AF_INET;
+    /* PASSO 3: Bind ao porto */
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family      = AF_INET;
     addr.sin_addr.s_addr = INADDR_ANY;
-    addr.sin_port = htons(SERVER_PORT);
+    addr.sin_port        = htons(SERVER_PORT);
 
-    /* PASSO 3: Associar socket ao porto (bind)
-     * Se falhar (retorna < 0), sair com erro
-     */
-    if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        perror("Erro ao abrir porto");
+    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        perror("bind");
         exit(-1);
     }
 
-    /* PASSO 4: Colocar socket em modo escuta (listen)
-     * 5 = número máximo de ligações pendentes na fila
-     */
+    /* PASSO 4: Listen */
     listen(fd, 5);
 
-    /* Desenhar interface do servidor */
     desenhar_cabecalho_servidor();
-    guardar_log("Servidor v2.0 (Etapa 2) iniciado e a escuta.", 1);
+    guardar_log("Servidor v2.1 (Etapa 2) iniciado e a escuta.", 1);
 
-    /* PASSO 5: LOOP PRINCIPAL — aceitar e processar clientes */
+    /* ========== LOOP PRINCIPAL ========== */
     while (1) {
-        struct sockaddr_in cli_addr; /* Endereço do cliente */
-        socklen_t size = sizeof(cli_addr);
+        struct sockaddr_in cli_addr;
+        socklen_t          size = sizeof(cli_addr);
 
-        /* BLOQUEIA até receber ligação de cliente */
-        client = accept(fd, (struct sockaddr*)&cli_addr, &size);
+        /* PASSO 5: Accept (BLOQUEIA até conexão) */
+        client = accept(fd, (struct sockaddr *)&cli_addr, &size);
+        if (client < 0) continue;
 
-        if (client > 0) {
-            memset(buffer, 0, BUF_SIZE); /* Limpar buffer */
-
-            /* Ler dados enviados pelo cliente */
-            if (read(client, buffer, BUF_SIZE - 1) > 0) {
-                /* Remover newline do final do buffer */
-                size_t len = strlen(buffer);
-                if (len > 0 && buffer[len - 1] == '\n') {
-                    buffer[len - 1] = '\0';
-                }
-
-                char response[BUF_SIZE] = ""; /* Preparar resposta */
-                char log_msg[BUF_SIZE] = "";  /* Preparar mensagem de log */
-                int log_type = 0; /* Tipo de log: 1=OK, 3=ERRO, 0=INFO */
-
-                /* ================================================
-                 * F3 — AUTH <user> <pass>
-                 * Autenticar utilizador
-                 * ================================================ */
-                if (strncmp(buffer, "AUTH ", 5) == 0) {
-                    char u[50], p[50], r[20];
-                    sscanf(buffer + 5, "%49s %49s", u,
-                           p);                        /* Extrair user e pass */
-                    int result = check_auth(u, p, r); /* Validar */
-
-                    if (result == 1) {
-                        /* Sucesso */
-                        sprintf(response, "AUTH_SUCCESS:%s", r);
-                        sprintf(log_msg, "Login OK: '%s' (%s)", u, r);
-                        log_type = 1;
-                    } else if (result == -1) {
-                        /* Utilizador PENDING */
-                        strcpy(response, "AUTH_PENDING");
-                        sprintf(log_msg, "Login bloqueado (PENDING): '%s'", u);
-                        log_type = 3;
-                    } else {
-                        /* Credenciais inválidas */
-                        strcpy(response, "AUTH_FAIL");
-                        sprintf(log_msg, "Login FALHOU: '%s'", u);
-                        log_type = 3;
-                    }
-                }
-
-                /* ================================================
-                 * F4 — GET_INFO
-                 * Devolver informação do servidor
-                 * ================================================ */
-                else if (strcmp(buffer, "GET_INFO") == 0) {
-                    int up = (int)difftime(time(NULL),
-                                           start_time); /* Uptime em segundos */
-                    sprintf(response,
-                            "C-Cord Server v%s | Uptime: %02dh:%02dm:%02ds",
-                            VERSAO_SERVIDOR, up / 3600, (up % 3600) / 60,
-                            up % 60);
-                    sprintf(log_msg, "GET_INFO processado");
-                    log_type = 0;
-                }
-
-                /* ================================================
-                 * F4 — ECHO <msg>
-                 * Ecoar mensagem (teste de latência)
-                 * ================================================ */
-                else if (strncmp(buffer, "ECHO ", 5) == 0) {
-                    sprintf(response, "Servidor Ecoa: %s", buffer + 5);
-                    sprintf(log_msg, "ECHO: '%s'", buffer + 5);
-                    log_type = 0;
-                }
-
-                /* ================================================
-                 * F5 — LIST_ALL
-                 * Listar todos os utilizadores
-                 * ================================================ */
-                else if (strcmp(buffer, "LIST_ALL") == 0) {
-                    list_all(response);
-                    sprintf(log_msg, "LIST_ALL executado");
-                    log_type = 0;
-                }
-
-                /* ================================================
-                 * F5 — CHECK_INBOX <user>
-                 * Verificar caixa de entrada
-                 * ================================================ */
-                else if (strncmp(buffer, "CHECK_INBOX ", 12) == 0) {
-                    char user[50];
-                    sscanf(buffer + 12, "%49s", user);
-                    check_inbox(user, response);
-                    sprintf(log_msg, "CHECK_INBOX: '%s'", user);
-                    log_type = 0;
-                }
-
-                /* ================================================
-                 * F5 — SEND_MSG <dest> <from> <msg>
-                 * Enviar mensagem
-                 * ================================================ */
-                else if (strncmp(buffer, "SEND_MSG ", 9) == 0) {
-                    char dest[50], from[50], msg[400];
-                    sscanf(buffer + 9, "%49s %49s %399[^\n]", dest, from, msg);
-                    send_msg(dest, from, msg, response);
-                    sprintf(log_msg, "SEND_MSG: de '%s' para '%s'", from, dest);
-                    log_type = 1;
-                }
-
-                /* ================================================
-                 * F6 — REGISTER <user> <pass>
-                 * Registar novo utilizador (PENDING)
-                 * ================================================ */
-                else if (strncmp(buffer, "REGISTER ", 9) == 0) {
-                    char u[50], p[50];
-                    sscanf(buffer + 9, "%49s %49s", u, p);
-                    register_user(u, p, response);
-                    sprintf(log_msg, "REGISTER: tentativa para '%s'", u);
-                    log_type = 1;
-                }
-
-                /* ================================================
-                 * F7 — APPROVE_USER <admin> <user>
-                 * Admin aprova utilizador PENDING
-                 * ================================================ */
-                else if (strncmp(buffer, "APPROVE_USER ", 13) == 0) {
-                    char admin[50], target[50];
-                    sscanf(buffer + 13, "%49s %49s", admin, target);
-                    approve_user(admin, target, response);
-                    sprintf(log_msg, "APPROVE_USER: '%s' por '%s'", target,
-                            admin);
-                    log_type = 1;
-                }
-
-                /* ================================================
-                 * F8 — DELETE_USER <admin> <user>
-                 * Admin remove utilizador
-                 * ================================================ */
-                else if (strncmp(buffer, "DELETE_USER ", 12) == 0) {
-                    char admin[50], target[50];
-                    sscanf(buffer + 12, "%49s %49s", admin, target);
-                    delete_user(admin, target, response);
-                    sprintf(log_msg, "DELETE_USER: '%s' por '%s'", target,
-                            admin);
-                    log_type = 1;
-                }
-
-                /* ================================================
-                 * COMANDO DESCONHECIDO
-                 * ================================================ */
-                else {
-                    strcpy(response, "CMD_INVALID");
-                    strcpy(log_msg, "Comando desconhecido recebido");
-                    log_type = 3;
-                }
-
-                /* Registar a operação e enviar resposta */
-                guardar_log(log_msg, log_type);
-                write(client, response, strlen(response));
-            }
-
-            /* Fechar ligação com cliente (modelo sequencial) */
+        /* PASSO 6: Read (BLOQUEIA até dados) */
+        memset(buffer, 0, BUF_SIZE);
+        if (read(client, buffer, BUF_SIZE - 1) <= 0) {
             close(client);
+            continue;
         }
+
+        /* Remove newlines do buffer */
+        size_t len = strlen(buffer);
+        while (len > 0 && (buffer[len-1] == '\n' || buffer[len-1] == '\r'))
+            buffer[--len] = '\0';
+
+        char response[BUF_SIZE] = "";
+        char log_msg[BUF_SIZE]  = "";
+        int  log_type           = 0;
+
+        total_pedidos++;
+
+        /* ========== PROCESSAMENTO DE COMANDOS ========== */
+
+        /* ---- AUTH ---- */
+        if (strncmp(buffer, "AUTH ", 5) == 0) {
+            char u[50], p[50], r[20] = "";
+            sscanf(buffer + 5, "%49s %49s", u, p);
+            int result = check_auth(u, p, r);
+
+            if      (result ==  1) { sprintf(response, "AUTH_SUCCESS:%s", r);
+                                     sprintf(log_msg, "Login OK: '%s' (%s)", u, r); log_type = 1; }
+            else if (result == -1) { strcpy(response, "AUTH_PENDING");
+                                     sprintf(log_msg, "Login bloqueado (PENDING): '%s'", u); log_type = 3; }
+            else if (result == -2) { strcpy(response, "AUTH_INACTIVE");
+                                     sprintf(log_msg, "Login bloqueado (INACTIVE): '%s'", u); log_type = 3; }
+            else                   { strcpy(response, "AUTH_FAIL");
+                                     sprintf(log_msg, "Login FALHOU: '%s'", u); log_type = 3; }
+        }
+
+        /* ---- GET_INFO ---- */
+        else if (strcmp(buffer, "GET_INFO") == 0) {
+            int up = (int)difftime(time(NULL), start_time);
+            sprintf(response,
+                    "C-Cord Server v%s | Uptime: %02dh:%02dm:%02ds | Pedidos: %d",
+                    VERSAO_SERVIDOR, up/3600, (up%3600)/60, up%60, total_pedidos);
+            sprintf(log_msg, "GET_INFO processado"); log_type = 0;
+        }
+
+        /* ---- ECHO ---- */
+        else if (strncmp(buffer, "ECHO ", 5) == 0) {
+            sprintf(response, "Servidor Ecoa: %s", buffer + 5);
+            sprintf(log_msg, "ECHO: '%s'", buffer + 5); log_type = 0;
+        }
+
+        /* ---- LIST_ALL ---- */
+        else if (strcmp(buffer, "LIST_ALL") == 0) {
+            list_all(response);
+            sprintf(log_msg, "LIST_ALL executado"); log_type = 0;
+        }
+
+        /* ---- LIST_PENDING ---- */
+        else if (strcmp(buffer, "LIST_PENDING") == 0) {
+            list_pending(response);
+            sprintf(log_msg, "LIST_PENDING executado"); log_type = 0;
+        }
+
+        /* ---- CHECK_INBOX ---- */
+        else if (strncmp(buffer, "CHECK_INBOX ", 12) == 0) {
+            char user[50];
+            sscanf(buffer + 12, "%49s", user);
+            check_inbox(user, response);
+            sprintf(log_msg, "CHECK_INBOX: '%s'", user); log_type = 0;
+        }
+
+        /* ---- SEND_MSG ---- */
+        else if (strncmp(buffer, "SEND_MSG ", 9) == 0) {
+            char dest[50], from[50], msg[400];
+            sscanf(buffer + 9, "%49s %49s %399[^\n]", dest, from, msg);
+            send_msg(dest, from, msg, response);
+            sprintf(log_msg, "SEND_MSG: de '%s' para '%s'", from, dest); log_type = 1;
+        }
+
+        /* ---- REGISTER ---- */
+        else if (strncmp(buffer, "REGISTER ", 9) == 0) {
+            char u[50], p[50];
+            sscanf(buffer + 9, "%49s %49s", u, p);
+            register_user(u, p, response);
+            sprintf(log_msg, "REGISTER: tentativa para '%s'", u); log_type = 1;
+        }
+
+        /* ---- APPROVE_USER ---- */
+        else if (strncmp(buffer, "APPROVE_USER ", 13) == 0) {
+            char admin[50], target[50];
+            sscanf(buffer + 13, "%49s %49s", admin, target);
+            approve_user(admin, target, response);
+            sprintf(log_msg, "APPROVE_USER: '%s' por '%s'", target, admin); log_type = 1;
+        }
+
+        /* ---- SUSPEND_USER ---- */
+        else if (strncmp(buffer, "SUSPEND_USER ", 13) == 0) {
+            char admin[50], target[50];
+            sscanf(buffer + 13, "%49s %49s", admin, target);
+            suspend_user(admin, target, response);
+            sprintf(log_msg, "SUSPEND_USER: '%s' por '%s'", target, admin); log_type = 1;
+        }
+
+        /* ---- DELETE_USER ---- */
+        else if (strncmp(buffer, "DELETE_USER ", 12) == 0) {
+            char admin[50], target[50];
+            sscanf(buffer + 12, "%49s %49s", admin, target);
+            delete_user(admin, target, response);
+            sprintf(log_msg, "DELETE_USER: '%s' por '%s'", target, admin); log_type = 1;
+        }
+
+        /* ---- VIEW_LOGS ---- */
+        else if (strncmp(buffer, "VIEW_LOGS ", 10) == 0) {
+            char admin[50];
+            sscanf(buffer + 10, "%49s", admin);
+            view_logs(admin, response);
+            sprintf(log_msg, "VIEW_LOGS: por '%s'", admin); log_type = 0;
+        }
+
+        /* ---- COMANDO DESCONHECIDO ---- */
+        else {
+            strcpy(response, "CMD_INVALID");
+            strcpy(log_msg, "Comando desconhecido recebido"); log_type = 3;
+        }
+
+        guardar_log(log_msg, log_type);
+        write(client, response, strlen(response));
+        close(client);
     }
+
     return 0;
 }
