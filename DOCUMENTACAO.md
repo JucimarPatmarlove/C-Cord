@@ -58,6 +58,8 @@ Todas as mensagens são texto simples enviado via TCP. O servidor responde e fec
 | `REGISTER <user> <pass>` | Registar nova conta | `REGISTER_OK` / `REGISTER_FAIL` |
 | `APPROVE_USER <admin> <user>` | Aprovar conta pendente (admin) | `APPROVE_OK` / `APPROVE_FAIL` |
 | `DELETE_USER <admin> <user>` | Apagar utilizador (admin) | `DELETE_OK` / `DELETE_FAIL` |
+| `SUSPEND_USER <admin> <user>` | Suspender utilizador (admin) — v1.1 | `SUSPEND_OK` / `SUSPEND_FAIL` |
+| `VIEW_LOGS` | Visualizar logs do servidor (admin) — v1.1 | Conteúdo de logs.txt |
 
 ---
 
@@ -93,6 +95,120 @@ jucimar:jucimar123:USER:ACTIVE
 ```
 
 > ⚠️ Em produção nunca guardar passwords em texto simples. Isto é um exercício académico.
+
+---
+
+## Etapa 2 — Versão 1.1: Interface Aprimorada e Comentários pt_PT
+
+### O que foi implementado
+
+✅ **Cliente (client.c):**
+- Interface TUI (Terminal User Interface) com 3 modos visuais distintos:
+  - **GUEST** (branco): utilizador não autenticado
+  - **USER** (ciano): utilizador normal autenticado
+  - **ADMIN** (vermelho): utilizador administrativo
+- Menu F3-F8 com operações completas:
+  - **F3:** Login (AUTH) — suporta ADMIN, USER, PENDING, INACTIVE
+  - **F4:** Info/Echo — GET_INFO e ECHO <msg>
+  - **F5:** Listar/Mensagens — LIST_ALL e CHECK_INBOX
+  - **F6:** Registar — REGISTER <user> <pass> (estado PENDING)
+  - **F7:** Gestão Admin — APPROVE_USER, DELETE_USER, SUSPEND_USER, VIEW_LOGS
+  - **F8:** Submenu de mensagens — SEND_MSG com validação de destinatário
+- Todas as funções comentadas em português europeu (pt_PT)
+- Tratamento de erros contextual (e.g., aviso de Caps Lock, sugestões de utilizadores)
+
+✅ **Servidor (server.c):**
+- Protocolo expandido (F3-F8):
+  - `AUTH <user> <pass>` → responde com `AUTH_SUCCESS:ADMIN/USER`, `AUTH_FAIL`, ou `AUTH_PENDING`
+  - `GET_INFO` → versão do servidor e uptime
+  - `ECHO <msg>` → ecoa mensagem
+  - `LIST_ALL` → tabela formatada com username, ROLE, STATUS
+  - `CHECK_INBOX <user>` → lista mensagens para utilizador
+  - `SEND_MSG <dest> <from> <msg>` → envia mensagem (novo)
+  - `REGISTER <user> <pass>` → cria utilizador com status PENDING
+  - `APPROVE_USER <admin> <user>` → admin aprova utilizador
+  - `DELETE_USER <admin> <user>` → admin apaga utilizador
+  - `SUSPEND_USER <admin> <user>` → admin suspende utilizador (novo)
+  - `VIEW_LOGS` → admin visualiza histórico de logs (novo)
+- Sistema de logging completo com timestamps:
+  - Regista todas as operações em logs.txt
+  - Cores ANSI no terminal (OK=verde, ERRO=vermelho, INFO=ciano)
+- Gestão de estado de utilizadores:
+  - ACTIVE: pode fazer login
+  - PENDING: aguarda aprovação de admin
+  - INACTIVE: suspenso por admin
+- Inbox de mensagens (inbox.txt) com persistência
+- Todas as funções com comentários explicativos em pt_PT
+
+### Formato da Base de Dados (v1.1)
+
+#### users.txt (5 campos)
+```
+ID:username:password:ROLE:STATUS
+```
+
+Exemplo:
+```
+1:admin:admin123:ADMIN:ACTIVE
+2:user1:pass123:USER:ACTIVE
+3:jucimar:jucimar123:USER:ACTIVE
+4:alice:alice123:USER:PENDING
+5:bob:bob123:USER:INACTIVE
+```
+
+#### inbox.txt (mensagens)
+```
+recipient:sender:message
+```
+
+#### logs.txt (registos de actividade)
+```
+[2024-01-15 14:30:45] [OK] Login bem-sucedido: user1
+[2024-01-15 14:31:12] [ERRO] Tentativa de login falhada: invalid_user
+[2024-01-15 14:32:00] [INFO] Utilizador alice aprovado por admin
+```
+
+### Mudanças de Código Principais
+
+1. **Cliente:**
+   - `draw_header()`: desenha interface com cores conforme modo (GUEST/USER/ADMIN)
+   - `call_server()`: estabelece conexão TCP, envia comando, recebe resposta
+   - `fluxo_login()`: implementa lógica de autenticação com tratamento de estados
+   - `submenu_mensagens()`: permite selecionar destinatário e enviar mensagem
+   - `menu_admin()`: submenu exclusivo para administradores
+
+2. **Servidor:**
+   - `guardar_log()`: regista operações com timestamp e tipo (OK/INFO/ERRO)
+   - `check_auth()`: valida credenciais e retorna ROLE (ADMIN/USER/PENDING/INACTIVE)
+   - `is_admin()`: verifica se utilizador tem permissões administrativas
+   - `list_all()`: formata resposta com todos os utilizadores
+   - `check_inbox()`: retorna mensagens pendentes para utilizador
+   - `send_msg()`: armazena mensagem em inbox.txt
+   - `register_user()`: cria novo utilizador com status PENDING
+   - `approve_user()`: admin aprova utilizador PENDING → ACTIVE
+   - `delete_user()`: admin apaga utilizador permanentemente
+   - `suspend_user()`: admin suspende utilizador → INACTIVE
+
+### Compilação (v1.1)
+
+```bash
+gcc -Wall -Wextra -o client client.c
+gcc -Wall -Wextra -o server server.c
+```
+
+Warnings esperados (não críticos):
+- `sprintf` overflow warning em `SEND_MSG` — buffer suficiente para dados práticos
+
+### Execução
+
+```bash
+# Terminal 1: Iniciar servidor
+./server
+
+# Terminal 2+: Iniciar cliente(s)
+./client 127.0.0.1 10000
+./client 192.168.1.100 10000  # outro servidor
+```
 
 ---
 
