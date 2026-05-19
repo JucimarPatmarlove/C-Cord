@@ -3,4 +3,4 @@
 3:jucimar:jucimar123:USER:ACTIVE
 4:sala:sala123:USER:ACTIVE
 5:joao:senha123:USER:PENDING
-testuser:testpass:USER:PENDING
+6:testuser:testpass:USER:PENDING
