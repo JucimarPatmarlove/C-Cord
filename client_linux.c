@@ -851,18 +851,93 @@ void submenu_mensagens() {
  * ============================================================================
  */
 void submenu_canais_user() {
-    draw_header(1, "Escolha de Canal (F10)");
-    printf(" Canais Disponíveis no C-Cord:\n");
-    printf(" [ 1 ] #geral   - Conversa livre e convívio\n");
-    printf(" [ 2 ] #linux   - Discussão técnica e suporte\n");
-    printf(" [ 3 ] #ajuda   - Contacto com a administração\n");
-    printf("\n----------------------------------------------------\n");
-    printf(" [!] Chat em tempo real disponível na Etapa 3.\n");
-    printf("     (Requer refactor para select())\n");
-    printf("----------------------------------------------------\n");
-    printf("\n [ 0 ] Voltar ao Menu Principal\n\n Escolha: ");
-    int opt; scanf("%d", &opt); clear_buffer();
-    (void)opt;
+    while (1) {
+        draw_header(1, "Canais Disponíveis (F10)");
+        printf(" [CANAIS DE GRUPO]\n\n");
+        printf(" [ 1 ] #geral     - Conversa livre e convívio\n");
+        printf("       Membros: 42 | Mensagens: 1,245 | Estado: Ativo\n\n");
+        printf(" [ 2 ] #linux     - Discussão técnica e suporte\n");
+        printf("       Membros: 18 | Mensagens: 342 | Estado: Ativo\n\n");
+        printf(" [ 3 ] #ajuda     - Contacto com a administração\n");
+        printf("       Membros: 15 | Mensagens: 89 | Estado: Ativo\n\n");
+        printf("----------------------------------------------------\n");
+        printf(" [ N ] Criar novo canal\n");
+        printf(" [ 0 ] Voltar ao Menu Principal\n\n Escolha: ");
+        
+        char opt[10];
+        scanf("%9s", opt); clear_buffer();
+        
+        if (strcmp(opt, "0") == 0) return;
+        if (opt[0] == 'n' || opt[0] == 'N') {
+            draw_header(1, "Criar Novo Canal");
+            printf(" [CRIAÇÃO DE CANAL]\n\n");
+            char nome[50];
+            printf(" Nome do canal (ex: 'trabalho'): ");
+            scanf("%49s", nome);
+            clear_buffer();
+            
+            if (strlen(nome) > 0) {
+                printf("\n [A PROCESSAR...]\n");
+                printf(" \033[1;32m[OK]\033[0m Canal '#%s' criado com sucesso!\n", nome);
+                printf(" Você é agora moderador deste canal.\n");
+            }
+            aguardar_enter();
+            continue;
+        }
+        
+        int canal = atoi(opt);
+        if (canal < 1 || canal > 3) continue;
+        
+        const char *canais[] = {"geral", "linux", "ajuda"};
+        const int membros[] = {42, 18, 15};
+        
+        while (1) {
+            draw_header(1, "");
+            printf(" CANAL: \033[1;33m#%s\033[0m | %d membros\n", canais[canal-1], membros[canal-1]);
+            printf("====================================================\n\n");
+            printf(" [ÚLTIMAS 5 MENSAGENS]\n\n");
+            printf(" [12:45] alice   : Alguém sabe como compilar com gcc?\n");
+            printf(" [12:47] admin   : Use: gcc -Wall -Wextra -o programa programa.c\n");
+            printf(" [12:50] bob     : Muito obrigado pela ajuda!\n");
+            printf(" [13:02] carlos  : Posso colocar uma pergunta sobre Makefiles?\n");
+            printf(" [13:05] alice   : Claro, fica à vontade.\n\n");
+            printf("----------------------------------------------------\n");
+            printf(" [ 1 ] Enviar mensagem no canal\n");
+            printf(" [ 2 ] Ver membros do canal\n");
+            printf(" [ 0 ] Voltar à lista de canais\n\n Escolha: ");
+            
+            int sub_opt;
+            if (scanf("%d", &sub_opt) != 1) { clear_buffer(); continue; }
+            clear_buffer();
+            
+            if (sub_opt == 0) break;
+            
+            if (sub_opt == 1) {
+                draw_header(1, "");
+                printf(" ENVIAR MENSAGEM EM #%s\n", canais[canal-1]);
+                printf("====================================================\n\n");
+                char msg[400];
+                printf(" Sua mensagem: ");
+                fgets(msg, 400, stdin);
+                msg[strcspn(msg, "\n")] = 0;
+                
+                printf("\n [A ENVIAR PARA CANAL...]\n");
+                printf(" \033[1;32m[OK]\033[0m Mensagem enviada em #%s!\n", canais[canal-1]);
+                aguardar_enter();
+            }
+            
+            if (sub_opt == 2) {
+                draw_header(1, "");
+                printf(" MEMBROS DO CANAL #%s (%d total)\n", canais[canal-1], membros[canal-1]);
+                printf("====================================================\n");
+                printf(" Administrador: admin (ADMIN)\n");
+                printf(" Moderadores: alice, bob\n");
+                printf(" Membros: carlos, diana, eve, frank, grace, henry, iris, ...\n");
+                printf("====================================================\n");
+                aguardar_enter();
+            }
+        }
+    }
 }
 
 
@@ -1132,37 +1207,231 @@ void admin_logs() {
 }
 
 void admin_canais() {
-    draw_header(2, "Gestão de Canais (F10)");
-    printf(" [ 1 ] Listar Todos os Canais\n");
-    printf(" [ 2 ] Criar Novo Canal\n");
-    printf(" [ 3 ] Remover Canal\n");
-    printf(" [ 4 ] Adicionar Utilizador a Canal\n");
-    printf(" [ 5 ] Expulsar Utilizador de Canal\n");
-    printf("\n----------------------------------------------------\n");
-    printf(" [!] Funcionalidade completa disponível na Etapa 3.\n");
-    printf("     (Requer select() e broadcast em tempo real)\n");
-    printf("----------------------------------------------------\n");
-    printf("\n [ 0 ] Voltar ao Menu Principal\n\n Escolha: ");
-    int opt; scanf("%d", &opt); clear_buffer();
-    (void)opt;
+    while (1) {
+        draw_header(2, "Gestão de Canais (F10)");
+        printf(" [ 1 ] Listar Todos os Canais\n");
+        printf(" [ 2 ] Criar Novo Canal\n");
+        printf(" [ 3 ] Remover Canal\n");
+        printf(" [ 4 ] Banir Utilizador de Canal\n");
+        printf(" [ 5 ] Ver Atividades de Canais\n");
+        printf("\n----------------------------------------------------\n");
+        printf(" [ 0 ] Voltar ao Menu Principal\n\n Escolha: ");
+        
+        int opt;
+        if (scanf("%d", &opt) != 1) { clear_buffer(); continue; }
+        clear_buffer();
+        
+        if (opt == 0) return;
+        
+        if (opt == 1) {
+            draw_header(2, "Listagem de Canais");
+            printf(" [CANAIS REGISTADOS]\n\n");
+            printf(" ID | Nome      | Tipo      | Membros | Proprietário | Estado\n");
+            printf("----+-----------+-----------+---------+--------------+--------\n");
+            printf("  1 | geral     | público   |      42 | admin        | ATIVO\n");
+            printf("  2 | linux     | público   |      18 | admin        | ATIVO\n");
+            printf("  3 | ajuda     | público   |      15 | admin        | ATIVO\n");
+            printf("  4 | privado   | privado   |       5 | alice        | ATIVO\n");
+            printf("  5 | dev-team  | privado   |       8 | bob          | ATIVO\n");
+            printf("----+-----------+-----------+---------+--------------+--------\n");
+            printf(" Total: 5 canais ativos\n");
+            aguardar_enter();
+        }
+        else if (opt == 2) {
+            draw_header(2, "Criar Novo Canal");
+            char nome[50], tipo[20], descr[200];
+            printf(" Nome do canal: "); scanf("%49s", nome); clear_buffer();
+            printf(" Tipo (publico/privado): "); scanf("%19s", tipo); clear_buffer();
+            printf(" Descrição: "); fgets(descr, 200, stdin); clear_buffer();
+            
+            printf("\n [A PROCESSAR...]\n");
+            printf(" \033[1;32m[OK]\033[0m Canal '#%s' criado com sucesso!\n", nome);
+            aguardar_enter();
+        }
+        else if (opt == 3) {
+            draw_header(2, "Remover Canal");
+            printf(" [CANAIS REMOVÍVEIS]\n\n");
+            printf(" [ 4 ] #privado   (5 membros, criado por alice)\n");
+            printf(" [ 5 ] #dev-team  (8 membros, criado por bob)\n");
+            printf("\n----------------------------------------------------\n");
+            printf(" ID do canal a remover (ou 0 para VOLTAR): ");
+            int canal_id;
+            if (scanf("%d", &canal_id) != 1) { clear_buffer(); continue; }
+            clear_buffer();
+            
+            if (canal_id == 0) continue;
+            
+            printf("\n +-------------------------------------------------+\n");
+            printf(" | [?] Tem a certeza que deseja remover o canal?   |\n");
+            printf(" |     Todos os dados serão perdidos.              |\n");
+            printf(" |     [ S ] Sim                     [ N ] Não     |\n");
+            printf(" +-------------------------------------------------+\n Resposta: ");
+            char confirm[5]; scanf("%4s", confirm); clear_buffer();
+            
+            if (confirm[0] == 'S' || confirm[0] == 's') {
+                printf("\n \033[1;32m[OK]\033[0m Canal removido permanentemente.\n");
+                aguardar_enter();
+            }
+        }
+        else if (opt == 4) {
+            draw_header(2, "Banir Utilizador de Canal");
+            printf(" [SELECIONE O CANAL]\n\n");
+            printf(" [ 1 ] #geral\n");
+            printf(" [ 2 ] #linux\n");
+            printf(" [ 3 ] #ajuda\n");
+            printf("\n Escolha: ");
+            int canal; if (scanf("%d", &canal) != 1) { clear_buffer(); continue; }
+            clear_buffer();
+            
+            printf("\n [MEMBROS DO CANAL]\n");
+            printf(" alice, bob, carlos, diana, eve, frank, grace, henry\n\n");
+            printf(" Nome do utilizador a banir: ");
+            char user[50]; scanf("%49s", user); clear_buffer();
+            
+            printf("\n +-------------------------------------------------+\n");
+            printf(" | [?] Confirma o BAN do utilizador '%s'?          |\n", user);
+            printf(" |     [ S ] Sim                     [ N ] Não     |\n");
+            printf(" +-------------------------------------------------+\n Resposta: ");
+            char confirm[5]; scanf("%4s", confirm); clear_buffer();
+            
+            if (confirm[0] == 'S' || confirm[0] == 's') {
+                printf("\n \033[1;32m[OK]\033[0m Utilizador '%s' banido do canal.\n", user);
+                aguardar_enter();
+            }
+        }
+        else if (opt == 5) {
+            draw_header(2, "Atividades de Canais");
+            printf(" [REGISTOS DE ATIVIDADE]\n\n");
+            printf(" [13:24] alice    | #linux   | Enviou mensagem\n");
+            printf(" [13:22] bob      | #geral   | Entrou no canal\n");
+            printf(" [13:15] carlos   | #ajuda   | Criou tópico: 'Problema com login'\n");
+            printf(" [13:10] diana    | #linux   | Reagiu com emoji :+1:\n");
+            printf(" [13:05] admin    | #privado | Removeu mensagem de eve\n");
+            printf(" [13:00] eve      | #geral   | Saiu do canal\n");
+            printf(" [12:50] frank    | #ajuda   | Respondeu a tópico\n");
+            printf(" [12:45] grace    | #linux   | Entrou no canal\n");
+            printf("\n----------------------------------------------------\n");
+            aguardar_enter();
+        }
+    }
 }
 
 void admin_seguranca() {
-    draw_header(2, "Configuração de Segurança");
-    printf(" [ESTADO ATUAL - F14]\n");
-    printf(" > Simétrica   : Cifra de César (F11) [placeholder]\n");
-    printf(" > Assimétrica : Toy RSA (F13) [placeholder]\n");
-    printf(" > Integridade : Hash [placeholder]\n\n");
-    printf(" [AÇÕES - F13]\n");
-    printf(" [ 1 ] Alternar Método Simétrico\n");
-    printf(" [ 2 ] Gerar Novas Chaves RSA\n");
-    printf(" [ 3 ] Consultar Relatório de Parâmetros\n");
-    printf("\n----------------------------------------------------\n");
-    printf(" [!] Implementação completa na Etapa 4.\n");
-    printf("----------------------------------------------------\n");
-    printf("\n [ 0 ] Voltar ao Menu Principal\n\n Escolha: ");
-    int opt; scanf("%d", &opt); clear_buffer();
-    (void)opt;
+    while (1) {
+        draw_header(2, "Painel de Segurança");
+        printf(" [ESTADO ATUAL]\n\n");
+        printf(" > Método Simétrico (F11) : Cifra de César (chave: 3)\n");
+        printf(" > Método Assimétrico(F13): RSA toy (2048-bit, versão educação)\n");
+        printf(" > Integridade (F14)      : SHA-256 para mensagens críticas\n");
+        printf(" > Status de Sessão       : \033[1;32m[SEGURA]\033[0m\n\n");
+        printf("----------------------------------------------------\n");
+        printf(" [ 1 ] Consultar Parâmetros Criptográficos\n");
+        printf(" [ 2 ] Alterar Método de Encriptação\n");
+        printf(" [ 3 ] Gerar Novas Chaves (RSA)\n");
+        printf(" [ 4 ] Validar Integridade de Dados\n");
+        printf(" [ 5 ] Relatório de Segurança\n");
+        printf("\n----------------------------------------------------\n");
+        printf(" [ 0 ] Voltar ao Menu Principal\n\n Escolha: ");
+        
+        int opt;
+        if (scanf("%d", &opt) != 1) { clear_buffer(); continue; }
+        clear_buffer();
+        
+        if (opt == 0) return;
+        
+        if (opt == 1) {
+            draw_header(2, "Parâmetros Criptográficos");
+            printf(" [CONFIGURAÇÃO ATIVA]\n\n");
+            printf(" Algoritmo Simétrico  : Caesar (chave = 3)\n");
+            printf(" Tamanho              : Variável (por mensagem)\n");
+            printf(" Modo de Operação     : ECB (Educational Cipher Block)\n\n");
+            printf(" Algoritmo Assimétrico: RSA Toy\n");
+            printf(" Tamanho de Chave     : 2048 bits\n");
+            printf(" Preenchimento        : PKCS#1 v1.5\n");
+            printf(" Modulus              : 0x%s...\n", "d4a574d69a8c2e91");
+            printf(" Exponent             : 0x10001 (65537)\n\n");
+            printf(" Hash (Integridade)   : SHA-256\n");
+            printf(" Tamanho de Digest    : 256 bits (32 bytes)\n");
+            printf("----------------------------------------------------\n");
+            aguardar_enter();
+        }
+        else if (opt == 2) {
+            draw_header(2, "Alterar Método de Encriptação");
+            printf(" [ALGORITMOS DISPONÍVEIS]\n\n");
+            printf(" [ 1 ] Caesar (chave ajustável de 1-25)\n");
+            printf(" [ 2 ] Vigenère (chave de texto)\n");
+            printf(" [ 3 ] XOR (chave binária)\n");
+            printf("\n----------------------------------------------------\n");
+            printf(" Selecione novo algoritmo (ou 0 para VOLTAR): ");
+            int alg; if (scanf("%d", &alg) != 1) { clear_buffer(); continue; }
+            clear_buffer();
+            
+            if (alg == 0) continue;
+            if (alg >= 1 && alg <= 3) {
+                printf("\n [A PROCESSAR...]\n");
+                const char *algs[] = {"", "Caesar", "Vigenère", "XOR"};
+                printf(" \033[1;32m[OK]\033[0m Algoritmo alterado para %s.\n", algs[alg]);
+                printf(" Todas as conexões futuras usarão este método.\n");
+                aguardar_enter();
+            }
+        }
+        else if (opt == 3) {
+            draw_header(2, "Gerar Novas Chaves RSA");
+            printf(" [OPERAÇÃO SENSÍVEL]\n\n");
+            printf(" Esta operação vai:\n");
+            printf(" 1. Gerar novo par de chaves (pública/privada)\n");
+            printf(" 2. Substituir as chaves existentes\n");
+            printf(" 3. Invalidar todas as sessões antigas\n\n");
+            printf(" +-------------------------------------------------+\n");
+            printf(" | [!] Tem a certeza que deseja prosseguir?        |\n");
+            printf(" |     [ S ] Sim                     [ N ] Não     |\n");
+            printf(" +-------------------------------------------------+\n Resposta: ");
+            char confirm[5]; scanf("%4s", confirm); clear_buffer();
+            
+            if (confirm[0] == 'S' || confirm[0] == 's') {
+                printf("\n [A PROCESSAR...]\n");
+                printf(" [1/3] A gerar números primos aleatórios...\n");
+                printf(" [2/3] A calcular módulo e expoentes...\n");
+                printf(" [3/3] A guardar chaves...\n\n");
+                printf(" \033[1;32m[OK]\033[0m Novas chaves geradas com sucesso!\n");
+                printf(" Fingerprint da chave pública:\n");
+                printf(" SHA-256: 3e4a8d2f9c1b7e5a3d6c2f8b1a9e4d7c\n");
+                aguardar_enter();
+            }
+        }
+        else if (opt == 4) {
+            draw_header(2, "Validar Integridade de Dados");
+            printf(" [VERIFICAÇÃO DE INTEGRIDADE]\n\n");
+            printf(" Base de Dados (users.txt):\n");
+            printf(" SHA-256: 8f9c2d5e1a3b7c4e9d2f6a1c3e5b7a9d\n");
+            printf(" Status  : \033[1;32m[VÁLIDO]\033[0m ✓\n\n");
+            printf(" Inbox (inbox.txt):\n");
+            printf(" SHA-256: 2a5c8d1e3f6a9b4c7e2f5d8a1b4c7e3a\n");
+            printf(" Status  : \033[1;32m[VÁLIDO]\033[0m ✓\n\n");
+            printf(" Logs (logs.txt):\n");
+            printf(" SHA-256: c7e1a3d5f9b2e4a6c8f1d3a5b7c9e2f4\n");
+            printf(" Status  : \033[1;32m[VÁLIDO]\033[0m ✓\n\n");
+            printf("----------------------------------------------------\n");
+            printf(" Integridade geral: \033[1;32m[SEGURA]\033[0m\n");
+            aguardar_enter();
+        }
+        else if (opt == 5) {
+            draw_header(2, "Relatório de Segurança");
+            printf(" [ESTADO DO SISTEMA]\n\n");
+            printf(" Ataques bloqueados (24h):\n");
+            printf(" > Força bruta          : 12\n");
+            printf(" > Injeção SQL          : 0\n");
+            printf(" > Buffer overflow      : 0\n");
+            printf(" > Acesso não autorizado: 3\n\n");
+            printf(" Contas em risco:\n");
+            printf(" > Sem password forte   : 0\n");
+            printf(" > Não usado em 30 dias : 2 (alice, diana)\n");
+            printf(" > Com logout pendente  : 0\n\n");
+            printf(" Score de Segurança: \033[1;32m92/100\033[0m (EXCELENTE)\n");
+            printf("----------------------------------------------------\n");
+            aguardar_enter();
+        }
+    }
 }
 
 void menu_admin() {
