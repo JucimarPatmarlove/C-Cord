@@ -44,15 +44,39 @@
  * ============================================================================
  */
 
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/socket.h>
 #include <time.h>
-#include <unistd.h>
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#ifdef _WIN32
+    /* Configurações para Windows */
+    #include <winsock2.h>
+    #include <windows.h>
+    #pragma comment(lib, "ws2_32.lib")
+    
+    #define CLOSE_SOCKET(s) closesocket(s)
+    #define SLEEP_SEC(s) Sleep((s) * 1000)
+    #define CLEAR_SCREEN "cls"
+    #define SOCKET_TYPE int
+    #define INVALID_SOCK INVALID_SOCKET
+#else
+    /* Configurações para Linux/Unix */
+    #include <arpa/inet.h>
+    #include <netdb.h>
+    #include <unistd.h>
+    #include <sys/socket.h>
+    
+    #define CLOSE_SOCKET(s) close(s)
+    #define SLEEP_SEC(s) sleep(s)
+    #define CLEAR_SCREEN "clear"
+    #define SOCKET_TYPE int
+    #define INVALID_SOCK -1
+#endif
 
 /* ============================================================================
  * CONSTANTES
@@ -165,7 +189,7 @@ void clear_buffer() {
  * ============================================================================
  */
 void draw_header(int modo, const char *subtitulo) {
-    system("clear");
+   system(CLEAR_SCREEN);
 
     /* Definir cor ANSI conforme modo */
     if      (modo == 2) printf("\033[1;31m"); /* Vermelho — modo ADMIN */
@@ -284,7 +308,7 @@ int call_server(const char *cmd, char *response_out) {
     /* PASSO 2: Conectar ao servidor */
     if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
         if (response_out) strcpy(response_out, "ERRO: Servidor inacessivel.");
-        close(fd);
+        CLOSE_SOCKET(fd);
         return 0;
     }
 
@@ -296,7 +320,7 @@ int call_server(const char *cmd, char *response_out) {
     recv(fd, res, BUF_SIZE - 1, 0);
 
     /* PASSO 5: Copiar e fechar */
-    close(fd);
+    CLOSE_SOCKET(fd);
     if (response_out) strncpy(response_out, res, BUF_SIZE - 1);
     return 1;
 }
@@ -833,7 +857,7 @@ void submenu_mensagens() {
                     printf(" \033[1;32m[OK]\033[0m Resposta enviada!\n");
                 else
                     printf(" \033[1;31m[ERRO]\033[0m %s\n", res_r);
-                sleep(1);
+                SLEEP_SEC(1);
             }
         }
     }
@@ -992,7 +1016,7 @@ void menu_utilizador() {
             if (c[0] == 'S' || c[0] == 's') {
                 printf("\n \033[1;32m[OK]\033[0m Sessão terminada. A voltar ao menu inicial...\n");
                 current_user[0] = '\0'; is_admin = 0; login_time = 0;
-                sleep(1); return;
+                SLEEP_SEC(1); return;
             }
             continue;
         }
@@ -1461,7 +1485,7 @@ void menu_admin() {
             if (c[0] == 'S' || c[0] == 's') {
                 printf("\n \033[1;32m[OK]\033[0m Sessão terminada.\n");
                 current_user[0] = '\0'; is_admin = 0; login_time = 0;
-                sleep(1); return;
+                SLEEP_SEC(1); return;
             }
             continue;
         }
@@ -1506,6 +1530,11 @@ void menu_admin() {
  */
 int main(int argc, char *argv[]) {
 
+    #ifdef _WIN32
+    WSADATA wsa;
+    WSAStartup(MAKEWORD(2,2), &wsa);
+    #endif
+
     if (argc < 3) {
         printf("Utilização: ./client_linux <IP_SERVIDOR> <PORTO>\n");
         printf("Exemplo   : ./client_linux 127.0.0.1 10000\n");
@@ -1526,18 +1555,18 @@ int main(int argc, char *argv[]) {
     addr.sin_port = htons(atoi(argv[2]));
 
     /* Teste inicial de ligação */
-    system("clear");
+    system(CLEAR_SCREEN);
     printf("\n A verificar servidor no porto %s...\n", argv[2]);
     int test_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (connect(test_fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
         printf("\n \033[1;31m[ERRO CRÍTICO]\033[0m Servidor não encontrado.\n");
         printf(" Verifique se o servidor está em execução.\n\n");
-        close(test_fd);
+        CLOSE_SOCKET(test_fd);
         return -1;
     }
-    close(test_fd);
+    CLOSE_SOCKET(test_fd);
     printf(" \033[1;32m[OK]\033[0m Servidor encontrado. A iniciar C-Cord v1.1...\n");
-    sleep(1);
+    SLEEP_SEC(1);
 
     /* LOOP PRINCIPAL */
     while (1) {
@@ -1574,6 +1603,10 @@ int main(int argc, char *argv[]) {
 
         if (opt == 2) fluxo_registo();
     }
+
+    #ifdef _WIN32
+        WSACleanup();
+    #endif
 
     return 0;
 }

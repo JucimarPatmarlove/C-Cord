@@ -55,15 +55,36 @@
  * ============================================================================
  */
 
-#include <arpa/inet.h>
-#include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/socket.h>
-#include <sys/types.h>
 #include <time.h>
-#include <unistd.h>
+
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <windows.h>
+    #pragma comment(lib, "ws2_32.lib")
+    
+    #define CLOSE_SOCKET(s) closesocket(s)
+    #define SLEEP_SEC(s) Sleep((s) * 1000)
+    #define CLEAR_SCREEN "cls"
+    #define READ_SOCKET(s, buf, len) recv(s, buf, (int)len, 0)
+    #define WRITE_SOCKET(s, buf, len) send(s, buf, (int)len, 0)
+    #define SETSOCKOPT_VAL(opt) (const char *)&(opt)
+    typedef int socklen_t;
+#else
+    #include <arpa/inet.h>
+    #include <netdb.h>
+    #include <unistd.h>
+    #include <sys/socket.h>
+    
+    #define CLOSE_SOCKET(s) close(s)
+    #define SLEEP_SEC(s) sleep(s)
+    #define CLEAR_SCREEN "clear"
+    #define READ_SOCKET(s, buf, len) read(s, buf, len)
+    #define WRITE_SOCKET(s, buf, len) write(s, buf, len)
+    #define SETSOCKOPT_VAL(opt) &(opt)
+#endif
 
 /* ============================================================================
  * CONSTANTES
@@ -195,7 +216,7 @@ int proximo_id() {
  * ============================================================================
  */
 void desenhar_cabecalho_servidor() {
-    system("clear");
+    system(CLEAR_SCREEN);
     printf("\033[1;36m");
     printf("   ____         ____ ___  ____  ____    \n");
     printf("  / ___|       / ___/ _ \\|  _ \\|  _ \\   \n");
@@ -757,13 +778,21 @@ int main() {
 
     start_time = time(NULL);
 
+    #ifdef _WIN32
+        WSADATA wsa;
+        if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+            printf("Falha na inicialização do Winsock.\n");
+            return 1;
+            }
+    #endif
+
     /* PASSO 1: Criar socket TCP */
     fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) { perror("socket"); exit(-1); }
 
     /* PASSO 2: Permitir reusar porto (evita "Address already in use") */
     int opt = 1;
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, SETSOCKOPT_VAL(opt), sizeof(opt));
 
     /* PASSO 3: Bind ao porto */
     memset(&addr, 0, sizeof(addr));
@@ -793,8 +822,8 @@ int main() {
 
         /* PASSO 6: Read (BLOQUEIA até dados) */
         memset(buffer, 0, BUF_SIZE);
-        if (read(client, buffer, BUF_SIZE - 1) <= 0) {
-            close(client);
+        if (READ_SOCKET(client, buffer, BUF_SIZE - 1) <= 0) {
+            CLOSE_SOCKET(client);
             continue;
         }
 
@@ -917,9 +946,12 @@ int main() {
         }
 
         guardar_log(log_msg, log_type);
-        write(client, response, strlen(response));
-        close(client);
+        WRITE_SOCKET(client, response, (int)strlen(response));
+        CLOSE_SOCKET(client);
     }
 
+    #ifdef _WIN32
+        WSACleanup();
+    #endif
     return 0;
 }
