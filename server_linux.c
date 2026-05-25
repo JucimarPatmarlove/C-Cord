@@ -17,6 +17,7 @@
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -47,12 +48,12 @@
  * EXPLICAÇÃO ETAPA 3:
  *   Na Etapa 2, servidor era sequencial: accept() → read() → close()
  *   Na Etapa 3, servidor usa select() multiplex + array persistente:
- *   
+ *
  *   - Array global Cliente clientes[MAX_CLIENTES] (50 slots)
  *   - Cada socket de cliente ocupa um slot
  *   - Socket fica ABERTO durante toda sessão (não fecha após comando)
  *   - Servidor envia broadcasts a todos com autenticado=1 no mesmo canal
- *   
+ *
  * CICLO DE VIDA:
  *   1. Client conecta → servidor accept() → fd preenchido
  *   2. Client envia AUTH → fd.autenticado=1, fd.username preenchido
@@ -79,18 +80,17 @@ int total_pedidos = 0;
  * OBJETIVO: Registar eventos do servidor em ficheiro e ecrã
  *
  * PARÂMETROS:
- *   mensagem: Texto do evento a registar (ex: "Cliente conectou", "AUTH bem-sucedida")
- *   tipo: Tipo de mensagem (afeta cor e prefix)
- *     1 = OK (verde) — operação bem-sucedida
- *     2 = INFO (ciano) — informação neutra
- *     3 = ERRO (vermelho) — erro ou aviso
+ *   mensagem: Texto do evento a registar (ex: "Cliente conectou", "AUTH
+ * bem-sucedida") tipo: Tipo de mensagem (afeta cor e prefix) 1 = OK (verde) —
+ * operação bem-sucedida 2 = INFO (ciano) — informação neutra 3 = ERRO
+ * (vermelho) — erro ou aviso
  *
  * EXPLICAÇÃO:
  *   1. Abre ficheiro logs.txt em modo append ("a")
  *   2. Formata timestamp atual (YYYY-MM-DD HH:MM:SS)
  *   3. Escreve em ficheiro: "[timestamp] mensagem"
  *   4. Mostrar também no ecrã do servidor com cor apropriada
- *   
+ *
  * FICHEIRO LOG:
  *   Útil para auditar: quem fez login, quem saiu, erros, etc.
  *   Path: logs.txt (no directório onde servidor executa)
@@ -103,7 +103,7 @@ int total_pedidos = 0;
  */
 void guardar_log(const char* mensagem, int tipo) {
     /* ===== ESCREVER EM FICHEIRO ===== */
-    FILE* f = fopen(LOG_FILE, "a");  /* Abrir em append mode */
+    FILE* f = fopen(LOG_FILE, "a"); /* Abrir em append mode */
     if (f) {
         char data[64];
         time_t agora = time(NULL);
@@ -113,14 +113,14 @@ void guardar_log(const char* mensagem, int tipo) {
         fprintf(f, "[%s] %s\n", data, mensagem);
         fclose(f);
     }
-    
+
     /* ===== MOSTRAR NO ECRÃ COM COR ===== */
     if (tipo == 1)
-        printf(" \033[1;32m[OK]\033[0m    | %s\n", mensagem);     /* Verde */
+        printf(" \033[1;32m[OK]\033[0m    | %s\n", mensagem); /* Verde */
     else if (tipo == 3)
-        printf(" \033[1;31m[ERRO]\033[0m  | %s\n", mensagem);    /* Vermelho */
+        printf(" \033[1;31m[ERRO]\033[0m  | %s\n", mensagem); /* Vermelho */
     else
-        printf(" \033[1;36m[INFO]\033[0m  | %s\n", mensagem);    /* Ciano */
+        printf(" \033[1;36m[INFO]\033[0m  | %s\n", mensagem); /* Ciano */
 }
 
 /* ============================================================================
@@ -137,7 +137,7 @@ void guardar_log(const char* mensagem, int tipo) {
  *   1:joao:password123:USER:ACTIVE
  *   2:maria:pass456:USER:PENDING
  *   3:admin:admin123:ADMIN:ACTIVE
- *   
+ *
  *   Esta função:
  *   1. Abre ficheiro em modo leitura
  *   2. Lê cada linha
@@ -145,17 +145,17 @@ void guardar_log(const char* mensagem, int tipo) {
  *   4. Mantém track do ID máximo encontrado
  *   5. Fecha ficheiro
  *   6. Retorna max_id + 1
- *   
+ *
  * EXEMPLO:
  *   Se users.txt tem IDs 1,2,3 → retorna 4 (próximo novo utilizador)
  */
 int proximo_id() {
     FILE* f = fopen(USERS_FILE, "r");
-    if (!f) return 1;  /* Se ficheiro não existe, começar em 1 */
-    
-    char line[256];
+    if (!f) return 1; /* Se ficheiro não existe, começar em 1 */
+
+    char line[800];
     int max_id = 0, id = 0;
-    
+
     /* Ler cada linha do ficheiro */
     while (fgets(line, sizeof(line), f)) {
         /* Extrair número do ID (primeiro campo, antes de ':') */
@@ -164,7 +164,7 @@ int proximo_id() {
         }
     }
     fclose(f);
-    return max_id + 1;  /* Retornar próximo ID disponível */
+    return max_id + 1; /* Retornar próximo ID disponível */
 }
 
 void desenhar_cabecalho_servidor() {
@@ -231,24 +231,25 @@ int check_auth(const char* username, const char* password, char* role) {
     }
 
     char line[256], id[10], u[50], p[50], r[20], s[20];
-    
+
     /* Ler cada linha do ficheiro */
     while (fgets(line, sizeof(line), f)) {
         /* Extrair campos: ID:username:password:role:status */
-        if (sscanf(line, "%9[^:]:%49[^:]:%49[^:]:%19[^:]:%19s", id, u, p, r, s) == 5) {
+        if (sscanf(line, "%9[^:]:%49[^:]:%49[^:]:%19[^:]:%19s", id, u, p, r,
+                   s) == 5) {
             /* Se username e password coincidem */
             if (strcmp(u, username) == 0 && strcmp(p, password) == 0) {
                 fclose(f);
                 /* Verificar status da conta */
-                if (strcmp(s, "PENDING") == 0) return -1;     /* Pendente */
-                if (strcmp(s, "INACTIVE") == 0) return -2;    /* Inactiva */
-                strcpy(role, r);  /* Copiar role (USER ou ADMIN) */
-                return 1;  /* Sucesso */
+                if (strcmp(s, "PENDING") == 0) return -1;  /* Pendente */
+                if (strcmp(s, "INACTIVE") == 0) return -2; /* Inactiva */
+                strcpy(role, r); /* Copiar role (USER ou ADMIN) */
+                return 1;        /* Sucesso */
             }
         }
     }
     fclose(f);
-    return 0;  /* Utilizador não encontrado ou password incorrecta */
+    return 0; /* Utilizador não encontrado ou password incorrecta */
 }
 
 int is_admin(const char* username) {
@@ -599,7 +600,7 @@ void view_logs(const char* admin_user, char* response) {
     }
 
     strcpy(response, "=== REGISTO DE ATIVIDADE ===\n");
-    char line[256];
+    char line[800];
     int count = 0;
     char buffer[200][256];
     while (fgets(line, sizeof(line), f) && count < 200)
@@ -686,43 +687,48 @@ void handle_broadcast(int client_idx, const char* msg, char* response) {
 /* ============================================================================
  * FUNÇÃO: handle_list_channels()
  * ============================================================================
- * OBJETIVO: Listar canais activos (utilizados por clientes autenticados)
+ * OBJETIVO: Listar canais activos com utilizadores em cada canal
  *
  * FUNCIONAMENTO:
  *   1. Itera array clientes[0..MAX_CLIENTES-1]
  *   2. Recolhe canais únicos de clientes autenticados
  *   3. Conta quantos utilizadores em cada canal
- *   4. Devolve lista formatada: "#geral (2), #admin (1), #privado (1)"
+ *   4. Devolve lista formatada com nomes dos utilizadores
  *
- * RESPOSTA:
- *   "CHANNELS: #geral (2), #admin (1)"   ← listagem com contadores
- *   "CHANNELS: nenhum"                   ← se sem clientes
+ * RESPOSTA (exemplo):
+ *   "CHANNELS: Utilizadores por canal:"
+ *   "  #geral (2): admin, user1"
+ *   "  #admin (1): admin"
+ *   "Fim da lista de canais."
  */
 void handle_list_channels(char* response) {
-    /* Array temporário para rastrear canais únicos e contadores */
+    /* Array temporário para rastrear canais únicos */
     char canais_unicos[MAX_CLIENTES][50];
-    int contadores[MAX_CLIENTES] = {0};
+    char usuarios_por_canal[MAX_CLIENTES][3000] = {""};
     int num_canais = 0;
 
-    /* Iterar clientes activos para recolher canais únicos */
+    /* Iterar clientes activos para recolher canais e seus utilizadores */
     for (int i = 0; i < MAX_CLIENTES; i++) {
         if (clientes[i].fd > 0 && clientes[i].autenticado &&
             strlen(clientes[i].canal) > 0) {
-            
             /* Procurar se canal já foi visto */
             int encontrado = 0;
             for (int j = 0; j < num_canais; j++) {
                 if (strcmp(canais_unicos[j], clientes[i].canal) == 0) {
-                    contadores[j]++;
+                    /* Adicionar utilizador à lista deste canal */
+                    if (strlen(usuarios_por_canal[j]) > 0) {
+                        strcat(usuarios_por_canal[j], ", ");
+                    }
+                    strcat(usuarios_por_canal[j], clientes[i].username);
                     encontrado = 1;
                     break;
                 }
             }
-            
+
             /* Se novo canal, adicionar à lista */
             if (!encontrado && num_canais < MAX_CLIENTES) {
                 strcpy(canais_unicos[num_canais], clientes[i].canal);
-                contadores[num_canais] = 1;
+                strcpy(usuarios_por_canal[num_canais], clientes[i].username);
                 num_canais++;
             }
         }
@@ -730,16 +736,24 @@ void handle_list_channels(char* response) {
 
     /* Formatar resposta */
     if (num_canais == 0) {
-        strcpy(response, "CHANNELS: nenhum");
+        strcpy(response, "CHANNELS: Nenhum canal activo");
     } else {
-        sprintf(response, "CHANNELS:");
+        strcpy(response, "CHANNELS: Utilizadores por canal:\n");
         for (int i = 0; i < num_canais; i++) {
-            sprintf(response + strlen(response), " %s (%d)",
-                    canais_unicos[i], contadores[i]);
-            if (i < num_canais - 1) {
-                strcat(response, ",");
+            char line[800];
+            int count = 0;
+
+            /* Contar utilizadores separando por vírgula */
+            for (int k = 0; usuarios_por_canal[i][k] != '\0'; k++) {
+                if (usuarios_por_canal[i][k] == ',') count++;
             }
+            count++; /* Adicionar 1 para o primeiro utilizador */
+
+            snprintf(line, sizeof(line), "  %s (%d): %s\n", canais_unicos[i],
+                     count, usuarios_por_canal[i]);
+            strncat(response, line, BUF_SIZE - strlen(response) - 1);
         }
+        strcat(response, "Fim da lista de canais.");
     }
 }
 
@@ -749,7 +763,7 @@ void handle_list_channels(char* response) {
  * OBJETIVO: Executar servidor TCP multiplex com select() para Etapa 3
  *
  * ARQUITETURA SELECT() - "O Coração do Servidor":
- *   
+ *
  *   TRADICIONAL (Etapa 2 - Sequencial):
  *   while(1) {
  *       accept()      ← Bloqueia esperar cliente
@@ -757,7 +771,7 @@ void handle_list_channels(char* response) {
  *       close()       ← Desconecta
  *   }
  *   Problema: Só um cliente por vez!
- *   
+ *
  *   NOVO (Etapa 3 - Multiplex com select()):
  *   while(1) {
  *       select()      ← Espera atividade em QUALQUER socket
@@ -788,11 +802,15 @@ int main() {
 
     start_time = time(NULL);
 
+    /* Ignorar SIGPIPE para evitar que o servidor bloqueie/crashe se um cliente
+     * desconectar abruptamente durante um send() */
+    signal(SIGPIPE, SIG_IGN);
+
     /* ===== INICIALIZAR ARRAY DE CLIENTES ===== */
     /* Limpar todos os 50 slots antes de começar */
     for (int i = 0; i < MAX_CLIENTES; i++) {
-        clientes[i].fd = -1;           /* -1 = slot vazio */
-        clientes[i].autenticado = 0;   /* Não autenticado por padrão */
+        clientes[i].fd = -1;         /* -1 = slot vazio */
+        clientes[i].autenticado = 0; /* Não autenticado por padrão */
         memset(clientes[i].username, 0, sizeof(clientes[i].username));
         memset(clientes[i].canal, 0, sizeof(clientes[i].canal));
     }
@@ -812,7 +830,7 @@ int main() {
     /* ===== BIND: Associar socket a porto 10000 ===== */
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = INADDR_ANY;  /* Aceitar de qualquer IP */
+    addr.sin_addr.s_addr = INADDR_ANY; /* Aceitar de qualquer IP */
     addr.sin_port = htons(SERVER_PORT);
 
     if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
@@ -827,18 +845,18 @@ int main() {
     desenhar_cabecalho_servidor();
     guardar_log("Servidor v3.0 (Etapa 3 - Select) iniciado e a escuta.", 1);
 
-    /* ========== LOOP PRINCIPAL COM SELECT ========== 
+    /* ========== LOOP PRINCIPAL COM SELECT ==========
      * Este é o coração do servidor multiplex (concorrência).
      * Aqui é onde select() permite atender múltiplos clientes.
      */
     while (1) {
-        fd_set readfds;           /* Conjunto de file descriptors a monitorizar */
-        struct timeval tv;        /* Timeout */
-        int max_fd = server_fd;   /* Começar com socket do servidor */
+        fd_set readfds;         /* Conjunto de file descriptors a monitorizar */
+        struct timeval tv;      /* Timeout */
+        int max_fd = server_fd; /* Começar com socket do servidor */
 
         /* ===== PREPARAR FD_SET PARA SELECT ===== */
-        FD_ZERO(&readfds);        /* Limpar o conjunto */
-        FD_SET(server_fd, &readfds);  /* Adicionar socket listening */
+        FD_ZERO(&readfds);           /* Limpar o conjunto */
+        FD_SET(server_fd, &readfds); /* Adicionar socket listening */
 
         /* Adicionar todos os clientes ativos (fd > 0) */
         for (int i = 0; i < MAX_CLIENTES; i++) {
@@ -866,7 +884,8 @@ int main() {
         /* ===== VERIFICAR SE HÁ NOVO CLIENTE ===== */
         /* Se server_fd (socket listening) tem atividade = nova conexão */
         if (FD_ISSET(server_fd, &readfds)) {
-            int client_fd = accept(server_fd, (struct sockaddr*)&cli_addr, &addr_size);
+            int client_fd =
+                accept(server_fd, (struct sockaddr*)&cli_addr, &addr_size);
             if (client_fd > 0) {
                 /* Procurar slot vazio no array */
                 int added = 0;
@@ -875,16 +894,22 @@ int main() {
                         /* Encontrado slot vazio → preencher */
                         clientes[i].fd = client_fd;
                         clientes[i].autenticado = 0;
-                        memset(clientes[i].username, 0, sizeof(clientes[i].username));
+                        memset(clientes[i].username, 0,
+                               sizeof(clientes[i].username));
                         memset(clientes[i].canal, 0, sizeof(clientes[i].canal));
                         added = 1;
-                        printf(" \033[1;32m[OK]\033[0m    | Cliente conectado (slot %d)\n", i);
+                        printf(
+                            " \033[1;32m[OK]\033[0m    | Cliente conectado "
+                            "(slot %d)\n",
+                            i);
                         break;
                     }
                 }
                 if (!added) {
                     /* Array cheio (50 slots ocupados) */
-                    printf(" \033[1;31m[ERRO]\033[0m  | Servidor cheio, rejeitando cliente\n");
+                    printf(
+                        " \033[1;31m[ERRO]\033[0m  | Servidor cheio, "
+                        "rejeitando cliente\n");
                     close(client_fd);
                 }
             }
@@ -893,10 +918,11 @@ int main() {
         /* ===== VERIFICAR CLIENTES EXISTENTES COM DADOS ===== */
         /* Para cada slot no array... */
         for (int i = 0; i < MAX_CLIENTES; i++) {
-            /* Se slot tem cliente ativo (fd > 0) E tem dados prontos (FD_ISSET) */
+            /* Se slot tem cliente ativo (fd > 0) E tem dados prontos (FD_ISSET)
+             */
             if (clientes[i].fd > 0 && FD_ISSET(clientes[i].fd, &readfds)) {
                 char buffer[BUF_SIZE] = "";
-                
+
                 /* ===== RECEBER DADOS DO CLIENTE ===== */
                 /* recv() bloqueia normalmente, mas aqui só é chamado após
                  * select() confirmar que há dados → retorna imediatamente */
@@ -907,7 +933,9 @@ int main() {
                     /* recv() retorna 0 = desconexão graciosamente
                      * recv() retorna -1 = erro (ex: conexão reset)
                      */
-                    printf(" \033[1;36m[INFO]\033[0m  | Cliente desconectado (slot %d: %s)\n",
+                    printf(
+                        " \033[1;36m[INFO]\033[0m  | Cliente desconectado "
+                        "(slot %d: %s)\n",
                         i, clientes[i].username);
                     close(clientes[i].fd);
                     clientes[i].fd = -1;
@@ -1074,7 +1102,8 @@ int main() {
 
                 else if (strcmp(buffer, "LIST_CHANNELS") == 0) {
                     handle_list_channels(response);
-                    sprintf(log_msg, "LIST_CHANNELS: '%s'", clientes[i].username);
+                    sprintf(log_msg, "LIST_CHANNELS: '%s'",
+                            clientes[i].username);
                     log_type = 2;
                 }
 

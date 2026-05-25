@@ -342,14 +342,19 @@ gcc -Wall -Wextra -o client_linux client_linux.c
 - Interface TUI com 3 modos visuais (visitante / utilizador / admin)
 - Formato `users.txt` actualizado com campo `STATUS` (ACTIVE / PENDING / INACTIVE)
 
-### 🟡 Etapa 3 — Tempo Real com select() (F9–F10) — *12/06/2026* (EM PROGRESSO)
+### 🟢 Etapa 3 — Tempo Real com select() (F9–F10) — *12/06/2026* ✅ COMPLETA
 
 - **F9** — Broadcast em tempo real (múltiplos clientes simultâneos)
 - **F10** — Suporte a canais (`JOIN #canal`)
 - **Status:** ✅ Implementação completa + Documentação extensiva em pt_PT
 - **Select Multiplex:** ✅ Funcionando (cliente + servidor)
 - **Persistência de ligações:** ✅ Implementada
+- **Processamento multi-linha:** ✅ **CORRIGIDO** — LIST_ALL, LIST_PENDING, LIST_CHANNELS exibem completamente
+- **LIST_CHANNELS melhorado:** ✅ Agora mostra nomes dos utilizadores por canal
+- **Compilação:** ✅ 0 warnings (ambos executáveis)
 - **Comentários:** ✅ 1480+ linhas (4.3:1 rácio)
+- **Testes:** ✅ Validados com netcat e scripts de teste
+- **Conclusão:** Etapa 3 **pronta para entrega** (12/06/2026)
 
 ### 🔲 Etapa 4 — Criptografia (F11–F15) — *05/07/2026*
 
