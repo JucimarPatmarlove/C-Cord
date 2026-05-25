@@ -67,6 +67,7 @@ Todas as mensagens são texto simples enviado via TCP. O servidor responde e fec
 | `JOIN #canal` | Entrar num canal — v2.0 (Etapa 3) | `JOIN_OK: Entrou no canal #geral` |
 | `LEAVE` | Sair do canal — v2.0 (Etapa 3) | `LEAVE_OK` |
 | `BROADCAST <msg>` | Enviar msg ao canal — v2.0 (Etapa 3) | `BCAST_SENT` (a outros: `[#canal] user: msg`) |
+| `LIST_CHANNELS` | Listar canais activos — v3.0 (Etapa 3) | `CHANNELS: #geral (2), #admin (1), ...` |
 
 ---
 
@@ -74,8 +75,8 @@ Todas as mensagens são texto simples enviado via TCP. O servidor responde e fec
 
 ```
 C-Cord/
-├── server_linux.c         # Servidor TCP v3.0 (1033 linhas) — Etapa 3
-├── client_linux.c         # Cliente TCP v2.0 (797 linhas) — Etapa 3
+├── server_linux.c         # Servidor TCP v3.0 (1145 linhas) — Etapa 3 com LIST_CHANNELS
+├── client_linux.c         # Cliente TCP v2.0 (775 linhas) — Etapa 3 sem atalhos numéricos
 ├── server_linux           # Binário compilado (30KB)
 ├── client_linux           # Binário compilado (22KB)
 ├── users.txt              # Base de dados de utilizadores

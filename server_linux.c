@@ -684,6 +684,66 @@ void handle_broadcast(int client_idx, const char* msg, char* response) {
 }
 
 /* ============================================================================
+ * FUNÇÃO: handle_list_channels()
+ * ============================================================================
+ * OBJETIVO: Listar canais activos (utilizados por clientes autenticados)
+ *
+ * FUNCIONAMENTO:
+ *   1. Itera array clientes[0..MAX_CLIENTES-1]
+ *   2. Recolhe canais únicos de clientes autenticados
+ *   3. Conta quantos utilizadores em cada canal
+ *   4. Devolve lista formatada: "#geral (2), #admin (1), #privado (1)"
+ *
+ * RESPOSTA:
+ *   "CHANNELS: #geral (2), #admin (1)"   ← listagem com contadores
+ *   "CHANNELS: nenhum"                   ← se sem clientes
+ */
+void handle_list_channels(char* response) {
+    /* Array temporário para rastrear canais únicos e contadores */
+    char canais_unicos[MAX_CLIENTES][50];
+    int contadores[MAX_CLIENTES] = {0};
+    int num_canais = 0;
+
+    /* Iterar clientes activos para recolher canais únicos */
+    for (int i = 0; i < MAX_CLIENTES; i++) {
+        if (clientes[i].fd > 0 && clientes[i].autenticado &&
+            strlen(clientes[i].canal) > 0) {
+            
+            /* Procurar se canal já foi visto */
+            int encontrado = 0;
+            for (int j = 0; j < num_canais; j++) {
+                if (strcmp(canais_unicos[j], clientes[i].canal) == 0) {
+                    contadores[j]++;
+                    encontrado = 1;
+                    break;
+                }
+            }
+            
+            /* Se novo canal, adicionar à lista */
+            if (!encontrado && num_canais < MAX_CLIENTES) {
+                strcpy(canais_unicos[num_canais], clientes[i].canal);
+                contadores[num_canais] = 1;
+                num_canais++;
+            }
+        }
+    }
+
+    /* Formatar resposta */
+    if (num_canais == 0) {
+        strcpy(response, "CHANNELS: nenhum");
+    } else {
+        sprintf(response, "CHANNELS:");
+        for (int i = 0; i < num_canais; i++) {
+            sprintf(response + strlen(response), " %s (%d)",
+                    canais_unicos[i], contadores[i]);
+            if (i < num_canais - 1) {
+                strcat(response, ",");
+            }
+        }
+    }
+}
+
+/* ============================================================================
  * FUNÇÃO PRINCIPAL: main() - REFATORADO COM SELECT()
  * ============================================================================
  * OBJETIVO: Executar servidor TCP multiplex com select() para Etapa 3
@@ -1010,6 +1070,12 @@ int main() {
                     sprintf(log_msg, "BROADCAST: '%s' em %s",
                             clientes[i].username, clientes[i].canal);
                     log_type = 1;
+                }
+
+                else if (strcmp(buffer, "LIST_CHANNELS") == 0) {
+                    handle_list_channels(response);
+                    sprintf(log_msg, "LIST_CHANNELS: '%s'", clientes[i].username);
+                    log_type = 2;
                 }
 
                 else {

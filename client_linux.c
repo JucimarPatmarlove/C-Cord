@@ -737,49 +737,22 @@ int main(int argc, char *argv[]) {
             }
             
             /* F2 - ECHO (teste de conectividade — servidor responde com messagem) */
-            else if (strncmp(input, "2", 1) == 0 || strncmp(input, "ECHO ", 5) == 0) {
-                char msg[300];
-                if (input[0] == '2') {
-                    printf(" Mensagem: ");
-                    fgets(msg, sizeof(msg), stdin);
-                    msg[strcspn(msg, "\n")] = 0;
-                    snprintf(input, sizeof(input) - 1, "ECHO %s", msg);
-                }
+            else if (strncmp(input, "ECHO", 4) == 0) {
                 send(server_fd, input, strlen(input), 0);
                 /* Servidor responde: "ECHO: <mensagem>" */
             }
             
             /* F9 - JOIN #canal (Etapa 3 - entrar num canal específico) */
-            else if (strncmp(input, "9", 1) == 0 || strncmp(input, "JOIN ", 5) == 0) {
-                char cmd[100];
-                if (input[0] == '9') {
-                    char canal[50];
-                    printf(" Canal (#): ");
-                    scanf("%49s", canal);
-                    clear_buffer();
-                    sprintf(cmd, "JOIN #%s", canal);
-                } else {
-                    strcpy(cmd, input);
-                }
-                send(server_fd, cmd, strlen(cmd), 0);
+            else if (strncmp(input, "JOIN ", 5) == 0) {
+                send(server_fd, input, strlen(input), 0);
                 /* Atualizar canal local do cliente */
-                strcpy(current_canal, strstr(cmd, "#") ? strstr(cmd, "#") : "#geral");
+                strcpy(current_canal, strstr(input, "#") ? strstr(input, "#") : "#geral");
                 /* Servidor responde: "JOIN_OK: Entrou em #geral" */
             }
             
             /* F10 - BROADCAST (Etapa 3 - enviar mensagem a todo canal) */
-            else if (strncmp(input, "10", 2) == 0 || strncmp(input, "BROADCAST ", 10) == 0) {
-                char cmd[BUF_SIZE];
-                if (strncmp(input, "10", 2) == 0) {
-                    char msg[300];
-                    printf(" Mensagem: ");
-                    fgets(msg, sizeof(msg), stdin);
-                    msg[strcspn(msg, "\n")] = 0;
-                    sprintf(cmd, "BROADCAST %s", msg);
-                } else {
-                    strcpy(cmd, input);
-                }
-                send(server_fd, cmd, strlen(cmd), 0);
+            else if (strncmp(input, "BROADCAST ", 10) == 0) {
+                send(server_fd, input, strlen(input), 0);
                 /* Servidor envia broadcast para todos no canal e responde "BCAST_SENT" */
             }
             
@@ -788,6 +761,12 @@ int main(int argc, char *argv[]) {
                 send(server_fd, "LEAVE", 5, 0);
                 strcpy(current_canal, "");
                 /* Servidor responde: "LEAVE_OK" */
+            }
+            
+            /* F11 - LIST_CHANNELS (Etapa 3 - listar canais activos) */
+            else if (strcmp(input, "LIST_CHANNELS") == 0) {
+                send(server_fd, "LIST_CHANNELS", 13, 0);
+                /* Servidor responde: "CHANNELS: #geral (2), #admin (1), ..." */
             }
             
             /* COMANDO GENÉRICO (enviar direto para servidor) */

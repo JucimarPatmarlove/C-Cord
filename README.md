@@ -81,6 +81,10 @@ Todas as mensagens são texto simples enviado via TCP. O servidor responde e fec
 | `SUSPEND_USER` | `<admin> <user>` | `SUSPEND_OK` / `SUSPEND_FAIL` | 2 — F7 |
 | `DELETE_USER` | `<admin> <user>` | `DELETE_OK` / `DELETE_FAIL` | 2 — F8 |
 | `VIEW_LOGS` | `<admin>` | Conteúdo de logs.txt | 2 — F8 |
+| `JOIN` | `#<canal>` | `JOIN_OK` / `JOIN_FAIL` | 3 — F9 |
+| `LEAVE` | — | `LEAVE_OK` / `LEAVE_FAIL` | 3 — F9 |
+| `BROADCAST` | `<msg>` | `BCAST_SENT` / `BCAST_FAIL` | 3 — F10 |
+| `LIST_CHANNELS` | — | `CHANNELS: #geral (2), #admin (1), ...` | 3 — F11 |
 
 ---
 
@@ -88,13 +92,16 @@ Todas as mensagens são texto simples enviado via TCP. O servidor responde e fec
 
 ```
 C-Cord/
-├── server_linux.c      ← Servidor TCP Linux/POSIX (v2.1, Etapa 2)
-├── client_linux.c      ← Cliente TCP Linux (TUI) (v1.1, Etapa 2)
+├── server_linux.c      ← Servidor TCP Linux/POSIX (v3.0, Etapa 3 com select())
+├── client_linux.c      ← Cliente TCP Linux (TUI) (v2.0, Etapa 3 com select())
 ├── users.txt           ← Base de dados de utilizadores
 ├── inbox.txt           ← Mensagens armazenadas (gerado em runtime)
 ├── logs.txt            ← Registo de atividade do servidor (gerado em runtime)
 ├── .gitignore          ← Exclui binários, logs e inbox
-└── README.md           ← Este ficheiro
+├── README.md           ← Este ficheiro
+├── DOCUMENTACAO.md     ← Documentação técnica detalhada
+├── TESTE_RAPIDO.sh     ← Script de teste interactivo
+└── MELHORIAS_UX.md     ← Changelog e melhorias de UX
 ```
 
 ### Formato do `users.txt` (v1.1 — 5 campos)
@@ -120,11 +127,18 @@ ID:username:password:ROLE:STATUS
 
 ---
 
-## 🚀 Etapa 3 — Versão 2.0: Select() Multiplex e Broadcasts em Tempo Real
+## 🚀 Etapa 3 — Versão 3.0: Select() Multiplex, Canais e Broadcasts em Tempo Real
 
-### Estado Atual (Atualizado 25/05/2026)
+### Estado Atual (Atualizado 26/05/2026)
 
 ✅ **Desenvolvimento Completo** — Select() implementado em cliente e servidor com broadcasts funcionais.
+
+✨ **Melhorias Implementadas (v3.0):**
+- ✅ Comando `LIST_CHANNELS` adicionado (listar canais activos com contadores de utilizadores)
+- ✅ Remover atalhos numéricos (2, 9, 10) para evitar ambiguidade com mensagens
+- ✅ Compilação sem warnings (servidor: 0 warnings, cliente: 0 warnings)
+- ✅ Compatibilidade total com Etapas 1 e 2 (todos os comandos preservados)
+- ✅ Ligações persistentes (socket permanece aberto durante sessão)
 
 ### 🎯 Teste Crítico — "Dupla Escuta" (Confirma sucesso da Etapa 3)
 
@@ -145,41 +159,43 @@ Username: joao
 Password: password123
 ✅ AUTH_SUCCESS (STATUS: USER - CYAN)
 
-Input: F9
-Canal: #geral
+Input: JOIN #geral
 ✅ [JOIN_OK] Entrou no canal #geral
 
-# Terminal 3 — Cliente B (joao segunda instância)
+# Terminal 3 — Cliente B (maria)
 $ ./client_linux 127.0.0.1 10000
 Input: F3
-Username: joao
-Password: password123
+Username: maria
+Password: password456
 ✅ AUTH_SUCCESS (STATUS: USER - CYAN)
 
-Input: F9
-Canal: #geral
+Input: JOIN #geral
 ✅ [JOIN_OK] Entrou no canal #geral
 
 # De volta ao Terminal 2 — Cliente A ENVIA BROADCAST
-Input: F10
-Mensagem: Olá pessoal, isto é um teste!
+Input: BROADCAST Olá pessoal, isto é um teste!
 ✅ [BCAST_SENT] Mensagem enviada ao canal #geral
 
 # 🎯 VERIFICAR NO TERMINAL 3 — Cliente B:
 # Deve aparecer SEM fazer nenhum comando:
 # [#geral] joao: Olá pessoal, isto é um teste!
+
+# Listar canais activos (em qualquer terminal)
+Input: LIST_CHANNELS
+✅ CHANNELS: #geral (2)
 ```
 
 **Resultado esperado:**
 - ✅ Se a mensagem apareça no Terminal 3 → **select() funciona e Etapa 3 está completa!**
+- ✅ Se `LIST_CHANNELS` mostrar "2" utilizadores → **Contadores funcionam!**
 - ❌ Se NÃO apareça → Problema no recv() em tempo real
 
-### Ficheiros da Etapa 3 (v2.0)
+### Ficheiros da Etapa 3 (v3.0)
 
 ```
 C-Cord/
-├── server_linux.c         ← Servidor TCP v3.0 (1033 linhas, select multiplex)
-├── client_linux.c         ← Cliente TCP v2.0 (797 linhas, select + dupla escuta)
+├── server_linux.c         ← Servidor TCP v3.0 (1145 linhas, select + LIST_CHANNELS)
+├── client_linux.c         ← Cliente TCP v2.0 (775 linhas, select + sem atalhos numéricos)
 ├── server_linux           ← Binário compilado (30KB)
 ├── client_linux           ← Binário compilado (22KB)
 ├── TESTE_RAPIDO.sh        ← Script de teste interativo

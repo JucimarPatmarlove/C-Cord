@@ -292,6 +292,26 @@ Se algo não funcionar:
 
 ═══════════════════════════════════════════════════════════════════════════════
 
+📋 TESTE 9: LIST_CHANNELS (NOVO - Etapa 3.0)
+
+INSTRUÇÕES:
+  1. Abre TERMINAL 1 → ./server_linux
+  2. Abre TERMINAL 2 → ./client_linux 127.0.0.1 10000
+     Input: 1 (Login)
+     Username: joao
+     Password: password123
+     Input: JOIN #geral
+     Input: LIST_CHANNELS
+  
+ESPERADO:
+  CHANNELS: #geral (1)
+
+NOTA:
+  - Se tiveres 2+ clientes em #geral, o número sobe
+  - Teste de validação: servidor está a contar utilizadores por canal
+
+═══════════════════════════════════════════════════════════════════════════════
+
 Muito bem! Testes concluídos.
 
 Tens perguntas? Vê:
