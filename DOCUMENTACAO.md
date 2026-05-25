@@ -64,6 +64,9 @@ Todas as mensagens são texto simples enviado via TCP. O servidor responde e fec
 | `DELETE_USER <admin> <user>` | Apagar utilizador (admin) | `DELETE_OK` / `DELETE_FAIL` |
 | `SUSPEND_USER <admin> <user>` | Suspender utilizador (admin) — v1.1 | `SUSPEND_OK` / `SUSPEND_FAIL` |
 | `VIEW_LOGS` | Visualizar logs do servidor (admin) — v1.1 | Conteúdo de logs.txt |
+| `JOIN #canal` | Entrar num canal — v2.0 (Etapa 3) | `JOIN_OK: Entrou no canal #geral` |
+| `LEAVE` | Sair do canal — v2.0 (Etapa 3) | `LEAVE_OK` |
+| `BROADCAST <msg>` | Enviar msg ao canal — v2.0 (Etapa 3) | `BCAST_SENT` (a outros: `[#canal] user: msg`) |
 
 ---
 
@@ -71,13 +74,16 @@ Todas as mensagens são texto simples enviado via TCP. O servidor responde e fec
 
 ```
 C-Cord/
-├── tcp_server.c          # Servidor TCP (Linux/POSIX)
-├── tcp_client_linux.c    # Cliente TCP Linux — Jucimar Cabral
-├── tcp_client.c          # Cliente TCP Windows (Winsock2) — Ivo Pinela
-├── users.txt             # Base de dados de utilizadores
-├── inbox.txt             # Mensagens armazenadas (gerado em runtime)
-├── logs.txt              # Registo de actividade do servidor (gerado em runtime)
-└── README.md             # Este ficheiro
+├── server_linux.c         # Servidor TCP v3.0 (1033 linhas) — Etapa 3
+├── client_linux.c         # Cliente TCP v2.0 (797 linhas) — Etapa 3
+├── server_linux           # Binário compilado (30KB)
+├── client_linux           # Binário compilado (22KB)
+├── users.txt              # Base de dados de utilizadores
+├── inbox.txt              # Arquivo de mensagens (gerado em runtime)
+├── logs.txt               # Registo de actividade (gerado em runtime)
+├── TESTE_RAPIDO.sh        # Script de teste interativo
+├── README.md              # Documentação principal
+└── DOCUMENTACAO.md        # Este ficheiro
 ```
 
 ### Formato do `users.txt`
@@ -345,6 +351,81 @@ gcc -Wall -Wextra -o client_linux client_linux.c
 ### Mudança Organizacional (18/05/2026)
 - **David Bunga**: Team Manager → Dev Team (transição para desenvolvimento técnico)
 - **Carlos Martins**: Dev Team → Team Manager (transição para gestão de projeto)
+
+---
+
+## 🧪 Testes — Etapa 3
+
+### Plano de Testes Completo
+
+Ver ficheiro `TESTE_RAPIDO.sh` para guia interativo com 15 testes.
+
+```bash
+$ ./TESTE_RAPIDO.sh
+```
+
+### Teste Crítico — "Dupla Escuta" (Confirma Select Multiplex)
+
+Este teste valida que o cliente recebe broadcasts em tempo real sem enviar comando.
+
+**Setup (3 terminais):**
+
+```bash
+# Terminal 1 — Servidor
+$ ./server_linux
+[SERVIDOR] Iniciado na porta 10000
+[SERVIDOR] À escuta de conexões...
+
+# Terminal 2 — Cliente A
+$ ./client_linux 127.0.0.1 10000
+F3 → joao / password123
+F9 → #geral
+F10 → "Olá pessoal!"
+
+# Terminal 3 — Cliente B
+$ ./client_linux 127.0.0.1 10000
+F3 → joao / password123
+F9 → #geral
+(aguarda... SEM fazer nada!)
+
+# Resultado esperado no Terminal 3:
+[#geral] joao: Olá pessoal!  ← Aparece automaticamente!
+```
+
+**Validação:**
+- ✅ Msg aparece → select() funciona, Etapa 3 completa
+- ❌ Msg não aparece → bug em recv() ou FD_ISSET
+
+### Checklist de Testes (15 testes)
+
+```
+[ ] 1. Compilação (0 warnings)
+[ ] 2. Servidor liga na porta 10000
+[ ] 3. Cliente conecta ao servidor
+[ ] 4. Autenticação VÁLIDA (AUTH_SUCCESS)
+[ ] 5. Autenticação INVÁLIDA (AUTH_FAIL)
+[ ] 6. Registo novo utilizador
+[ ] 7. JOIN #canal
+[ ] 8. BROADCAST (1 cliente)
+[ ] 9. BROADCAST (2+ clientes) — CRITICAL 🚨
+[ ] 10. GET_INFO (comando autenticado)
+[ ] 11. ECHO (teste comunicação)
+[ ] 12. LOGOUT (volta a GUEST)
+[ ] 13. Isolamento de canais
+[ ] 14. Desconexão graceful
+[ ] 15. Logs (auditoria)
+```
+
+### Verificação de Logs
+
+```bash
+$ cat logs.txt | tail -20
+
+[2026-05-25 16:50:30] [OK] AUTH_SUCCESS: joao (USER) - 127.0.0.1
+[2026-05-25 16:50:35] [INFO] joao JOINED #geral
+[2026-05-25 16:50:40] [INFO] BROADCAST from joao: Olá pessoal!
+[2026-05-25 16:50:45] [INFO] Client desconectado: joao
+```
 
 ---
 
