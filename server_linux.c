@@ -617,6 +617,39 @@ void view_logs(const char* admin_user, char* response) {
  * ============================================================================
  */
 
+/* ============================================================================
+ * FUNÇÃO: handle_join(int client_idx, const char* canal_nome, char* response)
+ * Processa comando JOIN: utilizador entra num canal específico.
+ *
+ * PARÂMETROS:
+ *   client_idx — Índice no array clientes[] (0-49)
+ *   canal_nome — Nome do canal (ex: "#geral" ou "geral")
+ *   response   — Buffer para resposta ao cliente
+ *
+ * FLUXO:
+ *   1. Validações:
+ *      • client_idx deve estar entre 0 e MAX_CLIENTES-1
+ *      • Cliente deve estar autenticado (is_admin_flag ou USER)
+ *      • canal_nome não pode estar vazio
+ *   2. Normalizar nome do canal:
+ *      • Se não começa com '#', adiciona prefix
+ *      • Resulta em: "#geral", "#linux", "#ajuda", "#custom", etc
+ *   3. Atualizar estado:
+ *      • strcpy(clientes[client_idx].canal, canal)
+ *      • Este cliente fica a escutar este canal
+ *      • Pode receber BROADCASTSs do canal
+ *   4. Responder ao cliente:
+ *      • "JOIN_OK: Entrou no canal #geral"
+ *
+ * NOTA ETAPA 3:
+ *   Na Etapa 2 (sequencial), JOIN era simples (sem persistência)
+ *   Na Etapa 3 (select), JOIN marca o cliente como "subscrito"
+ *   → Servidor manda BROADCASTSs apenas a clientes de mesmo canal
+ *   → Se cliente muda de canal, muda apenas esta string
+ *
+ * RETORNO: Nenhum (void) — resposta copiada para buffer
+ * ============================================================================
+ */
 void handle_join(int client_idx, const char* canal_nome, char* response) {
     if (client_idx < 0 || client_idx >= MAX_CLIENTES) {
         strcpy(response, "ERRO: Índice de cliente inválido.");
@@ -643,6 +676,34 @@ void handle_join(int client_idx, const char* canal_nome, char* response) {
     sprintf(response, "JOIN_OK: Entrou no canal %s", canal);
 }
 
+/* ============================================================================
+ * FUNÇÃO: handle_leave(int client_idx, char* response)
+ * Processa comando LEAVE: utilizador sai do canal atual.
+ *
+ * PARÂMETROS:
+ *   client_idx — Índice no array clientes[] (0-49)
+ *   response   — Buffer para resposta ao cliente
+ *
+ * FLUXO:
+ *   1. Validações:
+ *      • client_idx deve estar entre 0 e MAX_CLIENTES-1
+ *      • Cliente deve estar autenticado
+ *   2. Limpar canal:
+ *      • strcpy(clientes[client_idx].canal, "")
+ *      • String vazia significa "não numa sala"
+ *      • Cliente não receberá mais BROADCASTSs
+ *   3. Responder:
+ *      • "LEAVE_OK: Saiu do canal"
+ *
+ * EFEITO:
+ *   Cliente pode agora:
+ *   • JOIN a outro canal
+ *   • Enviar mensagens privadas
+ *   • Só não pode BROADCAST sem estar num canal
+ *
+ * RETORNO: Nenhum (void) — resposta copiada para buffer
+ * ============================================================================
+ */
 void handle_leave(int client_idx, char* response) {
     if (client_idx < 0 || client_idx >= MAX_CLIENTES) {
         strcpy(response, "ERRO: Índice de cliente inválido.");
@@ -657,6 +718,48 @@ void handle_leave(int client_idx, char* response) {
     strcpy(response, "LEAVE_OK: Saiu do canal");
 }
 
+/* ============================================================================
+ * FUNÇÃO: handle_broadcast(int client_idx, const char* msg, char* response)
+ * Processa comando BROADCAST: envia mensagem a todos no mesmo canal.
+ *
+ * PARÂMETROS:
+ *   client_idx — Índice do cliente remetente (0-49)
+ *   msg        — Texto da mensagem
+ *   response   — Buffer para resposta ao cliente remetente
+ *
+ * FLUXO:
+ *   1. Validações:
+ *      • client_idx deve estar entre 0 e MAX_CLIENTES-1
+ *      • Cliente deve estar autenticado
+ *      • Cliente deve estar num canal (strlen(canal) > 0)
+ *      • Se falha: responde "BCAST_FAIL: ..."
+ *   2. Construir mensagem formatada:
+ *      • sprintf(bcast_msg, "[#canal] username: mensagem")
+ *      • Ex: "[#geral] admin: Olá pessoal!"
+ *   3. ENVIO PARA TODOS:
+ *      Loop por todos os clientes:
+ *      • if (clientes[i].fd > 0) → slot em uso
+ *      • if (i != client_idx) → não re-enviar ao remetente
+ *      • if (clientes[i].autenticado) → só quem tá autenticado
+ *      • if (strcmp(canais == SAME) → mesmo canal
+ *      • Então: send(clientes[i].fd, bcast_msg, ...)
+ *   4. Responder ao remetente:
+ *      • "BCAST_SENT: Mensagem enviada"
+ *
+ * NOTA ETAPA 3 CRÍTICA:
+ *   Este handler implementa o BROADCAST multiutilizador:
+ *   • Socket de remetente fica ABERTO (não fecha após comando)
+ *   • Servidor pode enviar BROADCASTSs para MÚLTIPLOS clientes
+ *   • Cada cliente recebe instantaneamente (ou próxima select())
+ *   • Permite chat em tempo real
+ *
+ * OTIMIZAÇÃO FUTURA:
+ *   Poderia usar select() aqui para non-blocking sends
+ *   (evitar travamento se cliente desconectar durante send)
+ *
+ * RETORNO: Nenhum (void) — resposta copiada para buffer
+ * ============================================================================
+ */
 void handle_broadcast(int client_idx, const char* msg, char* response) {
     if (client_idx < 0 || client_idx >= MAX_CLIENTES) {
         strcpy(response, "ERRO: Índice inválido.");
@@ -685,21 +788,62 @@ void handle_broadcast(int client_idx, const char* msg, char* response) {
 }
 
 /* ============================================================================
- * FUNÇÃO: handle_list_channels()
+ * FUNÇÃO: handle_list_channels(char* response)
+ * Lista todos os canais activos com utilizadores presentes em cada um.
+ *
+ * FUNCIONALIDADE:
+ *   Gera relatório formatado de:
+ *   • Quantos canais estão ativos
+ *   • Quantos utilizadores em cada canal
+ *   • Nomes dos utilizadores em cada canal
+ *
+ * ALGORITMO:
+ *   1. Inicializar arrays temporários:
+ *      • canais_unicos[MAX_CLIENTES][50] — armazena nomes dos canais
+ *      • usuarios_por_canal[MAX_CLIENTES][3000] — lista users por canal
+ *      • num_canais = 0 — contador
+ *
+ *   2. ITERAR CLIENTES:
+ *      For i=0 to MAX_CLIENTES-1:
+ *      • if (clientes[i].fd > 0) → slot em uso
+ *      • if (clientes[i].autenticado) → user autenticado
+ *      • if (strlen(canal) > 0) → user numa sala (não vazio)
+ *
+ *   3. DETETAR CANAL NOVO:
+ *      For j=0 to num_canais-1:
+ *      • if (strcmp(canal == canais_unicos[j])) → já temos este canal
+ *      • Se encontrado=1 → já conhecemos, apenas adicionar user
+ *      • Se encontrado=0 (fim do loop) → novo canal, criar entrada
+ *
+ *   4. ACUMULAR UTILIZADORES:
+ *      • sprintf(usuarios_por_canal[idx], "user1, user2, user3, ...")
+ *      • Se não é primeiro user: strcat(", ")
+ *      • Limite: 3000 bytes por canal (suporta ~100 users)
+ *
+ *   5. FORMATAR RESPOSTA:
+ *      strcpy(response, "CHANNELS: Utilizadores por canal:\n")
+ *      For cada canal:
+ *      • snprintf("  #canal (3): user1, user2, user3\n", ...)
+ *      strcat(response, "Fim da lista de canais.")
+ *
+ * RESPOSTA EXEMPLO:
+ *   CHANNELS: Utilizadores por canal:
+ *     #geral (3): admin, user1, user2
+ *     #linux (2): admin, user1
+ *     #ajuda (1): admin
+ *   Fim da lista de canais.
+ *
+ * BUFFER MANAGEMENT:
+ *   • usuarios_por_canal: 3000 bytes (≈100 users * 30 bytes each)
+ *   • snprintf() com limite para evitar overflow
+ *   • Format: "  #canal (COUNT): user1, user2, ...\n" = 70 bytes aprox
+ *
+ * COMPLEXIDADE:
+ *   O(N²) onde N = MAX_CLIENTES (50)
+ *   → 2500 comparações no pior caso (aceitável para 50 clientes)
+ *
+ * RETORNO: Nenhum (void) — resposta copiada para buffer
  * ============================================================================
- * OBJETIVO: Listar canais activos com utilizadores em cada canal
- *
- * FUNCIONAMENTO:
- *   1. Itera array clientes[0..MAX_CLIENTES-1]
- *   2. Recolhe canais únicos de clientes autenticados
- *   3. Conta quantos utilizadores em cada canal
- *   4. Devolve lista formatada com nomes dos utilizadores
- *
- * RESPOSTA (exemplo):
- *   "CHANNELS: Utilizadores por canal:"
- *   "  #geral (2): admin, user1"
- *   "  #admin (1): admin"
- *   "Fim da lista de canais."
  */
 void handle_list_channels(char* response) {
     /* Array temporário para rastrear canais únicos */
@@ -794,6 +938,80 @@ void handle_list_channels(char* response) {
  *      e) Se server_fd ativo → novo cliente (accept)
  *      f) Se cliente ativo → processar comando
  *      g) Se recv()<=0 → desconectar cliente
+ */
+/* ============================================================================
+ * FUNÇÃO: main()
+ * Ponto de entrada do servidor TCP Etapa 3.
+ *
+ * RESPONSABILIDADES:
+ *   1. Inicializar array de clientes (50 slots)
+ *   2. Criar socket TCP listening na porta 10000
+ *   3. Loop infinito com select() multiplexing
+ *   4. Aceitar novas conexões (accept)
+ *   5. Processar comandos de clientes autenticados
+ *   6. Gerenciar desconexões
+ *   7. Manter ligações persistentes durante sessões
+ *
+ * ETAPA 3 — MUDANÇA FUNDAMENTAL:
+ *   Etapa 2: Sequencial — accept() → read() → close()
+ *   Etapa 3: Select() — accept() → mantém socket aberto → múltiplos reads
+ *
+ *   Isto permite:
+ *   • Múltiplos clientes simultaneamente
+ *   • Chat em tempo real (BROADCASTSs)
+ *   • Ligação persistente durante toda sessão
+ *   • Sem bloquear em recv() de um cliente (bloqueia todos)
+ *
+ * ESTRUTURA DE CLIENTES:
+ *   Cliente clientes[50]
+ *   Cada slot:
+ *   • fd = -1 (vazio) ou socket_fd (em uso)
+ *   • autenticado = 0 (não) ou 1 (sim)
+ *   • username = "admin", "user1", etc
+ *   • canal = "#geral", "#linux", "" (vazio = sem canal)
+ *
+ * HANDLERS DE COMANDO SUPORTADOS:
+ *   • AUTH username password → autenticar
+ *   • REGISTER username password → registar
+ *   • JOIN #canal → entrar num canal
+ *   • BROADCAST #canal msg → enviar para todos
+ *   • LEAVE → sair do canal
+ *   • LIST_ALL → tabela de users
+ *   • LIST_CHANNELS → canais e occupancy
+ *   • LIST_PENDING → contas aguardando aprovação
+ *   • APPROVE username → admin action
+ *   • GET_INFO → info servidor
+ *   • LOGOUT → desconectar
+ *   + outros suportados (17 total)
+ *
+ * FLUXO DE CICLO SELECT:
+ *   1. FD_ZERO() — limpar conjunto
+ *   2. FD_SET(server_fd) — adicionar listening socket
+ *   3. Loop clientes: se fd>0 → FD_SET(cliente.fd)
+ *   4. select(max_fd+1, &readfds, NULL, NULL, timeout)
+ *      → Bloqueia até haver dados OU timeout
+ *   5. if (FD_ISSET(server_fd)) → nova conexão
+ *      → accept() → preencer slot no array
+ *   6. if (FD_ISSET(cliente[i].fd)) → dados do cliente
+ *      → recv() → processar comando
+ *   7. if (recv()<=0) → desconectar
+ *      → fechar socket, marcar fd=-1
+ *
+ * SIGNAL HANDLING:
+ *   signal(SIGPIPE, SIG_IGN)
+ *   • Se cliente desconectar durante send()
+ *   • Servidor recebe SIGPIPE
+ *   • Ignorar para não crashar
+ *
+ * OTIMIZAÇÕES:
+ *   • SO_REUSEADDR: permite restart rápido da porta
+ *   • Backlog=5: máximo 5 conexões pendentes
+ *   • Timeout=1s: evitar busy-waiting
+ *
+ * RETORNO:
+ *   Loop infinito (nunca retorna normalmente)
+ *   Ctrl+C para terminar
+ * ============================================================================
  */
 int main() {
     int server_fd;
