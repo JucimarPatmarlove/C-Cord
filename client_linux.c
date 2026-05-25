@@ -1,26 +1,28 @@
 /*
  * ============================================================================
- * CLIENTE TCP C-CORD — VERSÃO 3.0 (Etapa 3: Select + Dupla Escuta + Canais)
+ * CLIENTE TCP C-CORD — VERSÃO 3.0
+ * (Etapa 3: Select + Ligação Persistente + TUI com Menus + Canais)
  * ============================================================================
  *
  * Descrição:
- *   Cliente reativo com select() para monitorizar simultaneamente:
- *   - Teclado (stdin): Entrada do utilizador
- *   - Socket TCP: Broadcasts do servidor
+ *   Cliente com TUI completa (3 modos visuais) fiel aos mockups aprovados.
+ *   select() para dupla escuta (stdin + socket) no chat em tempo real.
+ *   Ligação persistente: socket fica aberto durante toda a sessão.
  *
- *   Ligação persistente durante toda a sessão (não fecha após comando).
- *   Suporta JOIN, LEAVE, BROADCAST para comunicação em canais.
+ * Compilação : gcc -Wall -Wextra -o client_linux client_linux.c
+ * Execução   : ./client_linux <IP_SERVIDOR> <PORTO>
+ * Exemplo    : ./client_linux 127.0.0.1 10000
  *
- * Compilação: gcc -o client_linux client_etapa3.c
- * Execução  : ./client_linux <IP_SERVIDOR> <PORTO>
- * Exemplo   : ./client_linux 127.0.0.1 10000
- *
+ * Modos TUI:
+ *   GUEST (branco  \033[1;37m) — não autenticado
+ *   USER  (ciano   \033[1;36m) — utilizador normal
+ *   ADMIN (vermelho\033[1;31m) — administrador
  * ============================================================================
  */
 
 #include <arpa/inet.h>
-#include <netinet/in.h>
 #include <netdb.h>
+#include <netinet/in.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,816 +36,1150 @@
 #define STDIN_FILENO 0
 
 /* ============================================================================
- * VARIÁVEIS GLOBAIS DE ESTADO
+ * ESTADO GLOBAL DA SESSÃO
  * ============================================================================
  */
 char current_user[50] = "";
-char current_email[100] = "";
-int is_admin = 0;
+int is_admin_flag = 0;
 int autenticado = 0;
 char current_canal[50] = "";
 time_t login_time = 0;
 int server_fd = -1;
+int msgs_por_ler = 0;
 
 /* ============================================================================
- * FUNÇÃO: clear_buffer()
+ * UTILITÁRIOS
  * ============================================================================
- * OBJETIVO: Limpar buffer de entrada padrão (stdin) após usar scanf()
- *
- * EXPLICAÇÃO:
- *   Quando o utilizador insere dados com scanf(), qualquer carácter extra
- *   (como a tecla ENTER) fica no buffer. Esta função remove esses resíduos
- *   lendo carácter a carácter até encontrar uma quebra de linha (\n) ou fim
- *   de ficheiro (EOF). Isto evita que scanf() seguinte leia lixo.
- *
- * FUNCIONAMENTO:
- *   1. Loop: lê carácter com getchar()
- *   2. Se for '\n' (ENTER) ou EOF, sai do loop
- *   3. Continua até limpar tudo
  */
-void clear_buffer() {
+
+void clear_buffer(void) {
     int c;
-    /* Ler carácter a carácter até encontrar newline ou fim de ficheiro */
     while ((c = getchar()) != '\n' && c != EOF);
+}
+
+void aguardar_enter(void) {
+    printf("\n >> Pressione ENTER para continuar...");
+    getchar();
 }
 
 /* ============================================================================
  * FUNÇÃO: draw_header()
+ * Limpa o ecrã e desenha cabeçalho com logo e informações de sessão.
+ *
+ * modo: 0=GUEST, 1=USER, 2=ADMIN
  * ============================================================================
- * OBJETIVO: Desenhar a interface visual (TUI — Terminal User Interface)
- *
- * PARÂMETROS:
- *   - modo: Determina o esquema de cores baseado em permissões
- *     0 = GUEST (não autenticado) — branco (\033[1;37m)
- *     1 = USER (utilizador normal) — ciano (\033[1;36m)
- *     2 = ADMIN (administrador) — vermelho (\033[1;31m)
- *   - subtitulo: Texto descritivo a mostrar (ex: "LOGIN / AUTENTICAÇÃO")
- *
- * EXPLICAÇÃO:
- *   Esta função limpa o ecrã e desenha um cabeçalho artístico com o logo
- *   C-CORD. Mostra informações do utilizador (nome, canal, tempo de ligação).
- *   Usa códigos ANSI para cores: \033[1;XmTEXTO\033[0m (X=cor, reposição em 0m)
- *
- * ESQUEMA DE CORES:
- *   - 31m = Vermelho (ADMIN)
- *   - 36m = Ciano (USER)
- *   - 37m = Branco (GUEST)
- *   - 33m = Amarelo (HIGHLIGHTING)
- *   - 0m = Reposição para cor predefinida
  */
 void draw_header(int modo, const char* subtitulo) {
-    /* Limpar ecrã (comando UNIX) */
     system("clear");
 
-    /* ESCOLHER COR BASEADA NO MODO */
     if (modo == 2)
-        printf("\033[1;31m"); /* Vermelho para ADMIN */
+        printf("\033[1;31m");
     else if (modo == 1)
-        printf("\033[1;36m"); /* Ciano para USER */
+        printf("\033[1;36m");
     else
-        printf("\033[1;37m"); /* Branco para GUEST */
+        printf("\033[1;37m");
 
-    /* DESENHAR LOGO ASCII (C-CORD) */
     printf("  _____        _____              _ \n");
     printf(" / ____|      / ____|            | |\n");
     printf("| |     _____| |     ___  _ __ __| |\n");
     printf("| |    |_____| |    / _ \\| '__/ _` |\n");
     printf("| |____      | |___| (_) | | | (_| |\n");
     printf(" \\_____|      \\_____\\___/|_|  \\__,_|\n");
-    printf("\033[0m\n"); /* Reposição de cor */
+    printf("\033[0m\n");
 
-    /* LINHA SEPARADORA E INFORMAÇÃO DE MODO */
     printf("====================================================\n");
     if (modo == 2)
         printf("         \033[1;31m[!] MODO ADMINISTRADOR ATIVO\033[0m\n");
     else if (modo == 1)
         printf("         \033[1;36m[~] MODO UTILIZADOR NORMAL\033[0m\n");
     else
-        printf("         \033[1;37m[?] BEM-VINDO AO C-CORD (v3.0)\033[0m\n");
+        printf("           \033[1;37mBEM-VINDO AO C-CORD (v3.0)\033[0m\n");
 
-    /* MOSTRAR SUBTÍTULO SE FORNECIDO */
     if (subtitulo && strlen(subtitulo) > 0) {
         printf("====================================================\n");
         printf("    %s\n", subtitulo);
     }
     printf("====================================================\n");
 
-    /* MOSTRAR INFO DE UTILIZADOR SE AUTENTICADO (modo >= 1) */
     if (modo >= 1) {
-        printf(" UTILIZADOR: [\033[1;33m%s\033[0m] | CANAL: %s\n", current_user,
-               strlen(current_canal) > 0 ? current_canal : "(sem canal)");
-        /* Mostrar tempo de ligação em formato HH:MM:SS */
-        if (login_time > 0) {
-            int elapsed = (int)difftime(time(NULL), login_time);
-            printf(" Ligado desde: %02dh:%02dm:%02ds\n", elapsed / 3600,
-                   (elapsed % 3600) / 60, elapsed % 60);
-        }
+        printf(" UTILIZADOR: [\033[1;33m%s\033[0m] | FUNÇÃO: %s\n",
+               current_user, is_admin_flag ? "ADMIN" : "USER");
     }
     printf("----------------------------------------------------\n");
 }
 
 /* ============================================================================
- * FUNÇÃO: aguardar_enter()
+ * FUNÇÃO: enviar_e_receber()
+ * Envia comando ao servidor e aguarda resposta (bloqueante).
+ * Usado fora do loop select (login, menus com pedido-resposta).
  * ============================================================================
- * OBJETIVO: Parar execução e esperar que utilizador pressione ENTER
- *
- * EXPLICAÇÃO:
- *   Função simples para sincronização de apresentação.
- *   Permite utilizador ver mensagens de sucesso/erro antes de continuar.
- *   Lê um carácter (ENTER) e volta ao programa.
  */
-void aguardar_enter() {
-    printf("\n >> Pressione ENTER para continuar...");
-    getchar();
+int enviar_e_receber(const char* cmd, char* resp, int resp_sz) {
+    if (send(server_fd, cmd, strlen(cmd), 0) < 0) return -1;
+    memset(resp, 0, resp_sz);
+    int n = recv(server_fd, resp, resp_sz - 1, 0);
+    if (n > 0) resp[n] = '\0';
+    return n;
 }
 
 /* ============================================================================
- * FUNÇÃO: print_server_response()
+ * FUNÇÃO: imprimir_resposta()
+ * Imprime resposta do servidor linha a linha com cor adequada.
  * ============================================================================
- * OBJETIVO: Mostrar resposta do servidor de forma formatada
- *
- * PARÂMETROS:
- *   res: String contendo a resposta do servidor
- *
- * EXPLICAÇÃO:
- *   Função auxiliar para exibir respostas genéricas do servidor
- *   em formato padronizado: [SERVIDOR] seguido da mensagem.
- *   Usa cor verde para destaque.
  */
-void print_server_response(const char* res) {
-    printf("\n\033[1;32m[SERVIDOR]\033[0m\n%s\n", res);
-}
-
-/* ============================================================================
- * FUNÇÃO: sugerir_usernames()
- * ============================================================================
- * OBJETIVO: Sugerir nomes de utilizadores alternativos
- *
- * PARÂMETROS:
- *   base: Nome base para gerar sugestões
- *
- * EXPLICAÇÃO:
- *   Se utilizador tenta criar conta com username já existente,
- *   esta função gera sugestões alternativas adicionando sufixos.
- *   Exemplos: "joao" → "joao_2026", "joao_pt", "joao_ccord"
- */
-void sugerir_usernames(const char* base) {
-    printf("\n Sugestões disponíveis:\n");
-    printf(" > %s_2026\n", base);
-    printf(" > %s_pt\n", base);
-    printf(" > %s_ccord\n", base);
-}
-
-/* ============================================================================
- * FUNÇÃO: handle_server_message()
- * ============================================================================
- * OBJETIVO: Processar e formatar mensagem recebida do servidor
- *
- * PARÂMETROS:
- *   msg: String contendo a mensagem recebida via socket
- *
- * EXPLICAÇÃO:
- *   Esta função verifica o tipo de mensagem recebida e formata a saída
- *   com cores e símbolos apropriados:
- *
- *   TIPO 1: Broadcasts (começam com '[')
- *     Formato: "[#geral] utilizador: mensagem"
- *     Cor: Amarelo (\033[1;33m) para destaque
- *     Uso: Mensagens de chat em tempo real de outros utilizadores
- *
- *   TIPO 2: Respostas de autenticação
- *     AUTH_SUCCESS → OK em verde
- *     AUTH_FAIL → ERRO em vermelho
- *
- *   TIPO 3: Respostas de comandos
- *     JOIN_OK, BCAST_SENT, LEAVE_OK → OK em verde
- *     Qualquer coisa com FAIL/ERRO → ERRO em vermelho
- *
- *   TIPO 4: Mensagens genéricas
- *     Mostradas em ciano ([INFO])
- *
- * FLUXO DE DECISÃO:
- *   if msg[0] == '[' → é broadcast (mensagem de chat) → amarelo
- *   else if contém "AUTH_SUCCESS" → sucesso login → verde OK
- *   else if contém "FAIL" ou "ERRO" → falha → vermelho ERRO
- *   else → informação genérica → ciano INFO
- */
-void handle_server_message(const char* msg) {
-    /* Se mensagem vazia, não fazer nada */
-    if (strlen(msg) == 0) return;
-
-    /* ===== BROADCAST DE CHAT (de outro utilizador no canal) ===== */
-    /* Broadcasts formatados como "[#geral] username: mensagem" */
-    if (msg[0] == '[') {
-        printf("\n\033[1;33m%s\033[0m\n", msg); /* Amarelo para destaque */
-    }
-    /* ===== RESPOSTA DE AUTENTICAÇÃO BEM-SUCEDIDA ===== */
-    else if (strncmp(msg, "AUTH_SUCCESS", 12) == 0) {
-        printf("\n\033[1;32m[OK]\033[0m Autenticação bem-sucedida!\n");
-    }
-    /* ===== RESPOSTA DE JOIN (entrar em canal) ===== */
-    else if (strncmp(msg, "JOIN_OK", 7) == 0) {
-        printf("\n\033[1;32m[OK]\033[0m %s\n", msg);
-    }
-    /* ===== RESPOSTA DE BROADCAST ENVIADO ===== */
-    else if (strncmp(msg, "BCAST_SENT", 10) == 0) {
-        printf("\n\033[1;32m[OK]\033[0m Mensagem enviada!\n");
-    }
-    /* ===== RESPOSTA DE LEAVE (sair de canal) ===== */
-    else if (strncmp(msg, "LEAVE_OK", 8) == 0) {
-        printf("\n\033[1;32m[OK]\033[0m Saiu do canal\n");
-    }
-    /* ===== ERROS (qualquer mensagem contendo FAIL ou ERRO) ===== */
-    else if (strstr(msg, "FAIL") || strstr(msg, "ERRO")) {
-        printf("\n\033[1;31m[ERRO]\033[0m %s\n", msg);
-    }
-    /* ===== INFORMAÇÃO GENÉRICA ===== */
-    else {
-        printf("\n\033[1;36m[INFO]\033[0m %s\n", msg);
-    }
-}
-
-/* ============================================================================
- * FUNÇÃO: process_multiline_response()
- * ============================================================================
- * OBJETIVO: Processar respostas do servidor que têm múltiplas linhas
- *
- * PARÂMETROS:
- *   buffer: String contendo uma ou mais linhas (separadas por \n)
- *
- * FUNCIONAMENTO:
- *   1. Itera o buffer carácter por carácter
- *   2. Accumula cada linha até encontrar \n
- *   3. Para cada linha completa, chama handle_server_message()
- *   4. Garante que tabelas (LIST_ALL, etc.) são exibidas completamente
- *
- * EXEMPLO:
- *   Entrada: "=== UTILIZADORES ===\n ID | Util ...\n 1 | admin | ..."
- *   Saída: Imprime cada linha com formatação apropriada
- */
-void process_multiline_response(const char* buffer) {
+void imprimir_resposta(const char* buffer) {
     if (!buffer || strlen(buffer) == 0) return;
 
-    char line[BUF_SIZE] = "";
-    int line_idx = 0;
+    char copia[BUF_SIZE];
+    strncpy(copia, buffer, BUF_SIZE - 1);
+    copia[BUF_SIZE - 1] = '\0';
 
-    /* Iterar o buffer inteiro */
-    for (int i = 0; buffer[i] != '\0'; i++) {
-        if (buffer[i] == '\n') {
-            /* Encontrou fim de linha */
-            line[line_idx] = '\0'; /* Null terminator */
+    char* linha = strtok(copia, "\n");
+    while (linha) {
+        size_t l = strlen(linha);
+        if (l > 0 && linha[l - 1] == '\r') linha[l - 1] = '\0';
 
-            /* Se linha não vazia, processar */
-            if (strlen(line) > 0) {
-                handle_server_message(line);
-            }
-
-            /* Reset para próxima linha */
-            line_idx = 0;
-            line[0] = '\0';
-        } else if (buffer[i] == '\r') {
-            /* Ignorar \r (case pode ter \r\n) */
-            continue;
+        if (linha[0] == '[' && strchr(linha, ']') && strchr(linha, ':')) {
+            printf("\033[1;33m%s\033[0m\n", linha);
+        } else if (strstr(linha, "FAIL") || strstr(linha, "[ERRO]") ||
+                   strstr(linha, "AUTH_FAIL") ||
+                   strstr(linha, "AUTH_PENDING") ||
+                   strstr(linha, "AUTH_INACTIVE") || strstr(linha, "INVALID")) {
+            printf("\033[1;31m%s\033[0m\n", linha);
+        } else if (strstr(linha, "_OK") || strstr(linha, "[OK]") ||
+                   strstr(linha, "AUTH_SUCCESS") ||
+                   strstr(linha, "BCAST_SENT") || strstr(linha, "MSG_SENT") ||
+                   strstr(linha, "JOIN_OK") || strstr(linha, "LEAVE_OK")) {
+            printf("\033[1;32m%s\033[0m\n", linha);
+        } else if (strstr(linha, "[!]") || strstr(linha, "[AVISO]")) {
+            printf("\033[1;33m%s\033[0m\n", linha);
         } else {
-            /* Adicionar carácter à linha actual */
-            if (line_idx < BUF_SIZE - 1) {
-                line[line_idx++] = buffer[i];
-            }
+            printf("\033[1;36m%s\033[0m\n", linha);
         }
-    }
-
-    /* Processar última linha se existir (sem \n no final) */
-    if (line_idx > 0) {
-        line[line_idx] = '\0';
-        handle_server_message(line);
+        linha = strtok(NULL, "\n");
     }
 }
 
 /* ============================================================================
- * FUNÇÃO: fluxo_login()
+ * FLUXO DE LOGIN
+ * Conforme mockup: credenciais → resultado → opções em caso de falha.
  * ============================================================================
- * OBJETIVO: Autenticar o utilizador no servidor antes de entrar em chat
- *
- * PARÂMETROS:
- *   server_fd: File descriptor do socket TCP já conectado ao servidor
- *
- * RETORNO:
- *   1 se login bem-sucedido
- *   0 se login falhou, conta pendente ou inactiva
- *
- * EXPLICAÇÃO DO PROTOCOLO DE AUTENTICAÇÃO (REDE):
- *
- *   CLIENTE                        SERVIDOR
- *   ────────────────────────────────────────
- *   1. Pedir credentials        →
- *                               ← 2. Processar (verifica ficheiro users.txt)
- *   3. Receber resposta         ←
- *
- *   POSSÍVEIS RESPOSTAS:
- *   - "AUTH_SUCCESS:USER" → Login OK como utilizador normal
- *   - "AUTH_SUCCESS:ADMIN" → Login OK como administrador
- *   - "AUTH_FAIL" → Credenciais incorrectas
- *   - "AUTH_PENDING" → Conta à espera de aprovação do admin
- *   - "AUTH_INACTIVE" → Conta suspensa
- *
- *   FLUXO APÓS SUCESSO:
- *   1. Guardar username em current_user
- *   2. Definir is_admin baseado na resposta
- *   3. Registar tempo de login (login_time)
- *   4. AUTO-JOIN #geral (channel predefinido)
- *   5. Retornar 1 para entrar no loop principal
  */
-int fluxo_login(int server_fd) {
+int fluxo_login(void) {
     while (1) {
         draw_header(0, "LOGIN / AUTENTICAÇÃO");
         char u[50], p[50], cmd[150], res[BUF_SIZE];
 
-        /* OBTER CREDENCIAIS DO UTILIZADOR */
-        printf(" Nome de Utilizador: ");
-        scanf("%49s", u);
+        printf("\n Nome de Utilizador: ");
+        if (scanf("%49s", u) != 1) {
+            clear_buffer();
+            return 0;
+        }
         printf(" Palavra-passe: ");
-        scanf("%49s", p);
-        clear_buffer(); /* Limpar buffer após scanf */
+        if (scanf("%49s", p) != 1) {
+            clear_buffer();
+            return 0;
+        }
+        clear_buffer();
 
         printf("\n [A VERIFICAR CREDENCIAIS...]\n");
 
-        /* ===== ENVIAR COMANDO AUTH PARA SERVIDOR (VIA REDE) ===== */
-        /* Formato: "AUTH username password" */
-        sprintf(cmd, "AUTH %s %s", u, p);
-        send(server_fd, cmd, strlen(cmd), 0);
-        /* send(): Enviar buffer para socket
-         * Parâmetros: (socket_fd, dados, tamanho, flags)
-         * Retorno: bytes enviados ou -1 se erro
-         */
-
-        /* ===== RECEBER RESPOSTA DO SERVIDOR (VIA REDE) ===== */
-        memset(res, 0, BUF_SIZE); /* Limpar buffer de resposta */
-        recv(server_fd, res, BUF_SIZE - 1, 0);
-        /* recv(): Receber dados do socket até BUF_SIZE-1 bytes
-         * Armazena na variável res
-         * Retorno: bytes recebidos, 0=desconexão, -1=erro
-         */
-
-        /* ===== PROCESSAR RESPOSTA ===== */
+        snprintf(cmd, sizeof(cmd), "AUTH %s %s", u, p);
+        if (enviar_e_receber(cmd, res, BUF_SIZE) <= 0) {
+            printf(" \033[1;31m[ERRO]\033[0m Servidor não respondeu.\n");
+            aguardar_enter();
+            return 0;
+        }
 
         if (strncmp(res, "AUTH_SUCCESS", 12) == 0) {
-            /* ✓ LOGIN BEM-SUCEDIDO */
             strcpy(current_user, u);
-            /* Verificar se é ADMIN ou USER */
-            is_admin = (strstr(res, "ADMIN") != NULL);
+            is_admin_flag = (strstr(res, "ADMIN") != NULL);
             autenticado = 1;
-            login_time = time(NULL); /* Registar hora de login */
+            login_time = time(NULL);
             strcpy(current_canal, "#geral");
-            printf(" \033[1;32m[OK]\033[0m Bem-vindo, %s!\n", u);
 
-            aguardar_enter();
-            return 1; /* SUCESSO */
-        } else if (strcmp(res, "AUTH_PENDING") == 0) {
-            /* ✗ CONTA À ESPERA DE APROVAÇÃO */
-            printf(" \033[1;33m[!] Conta aguarda aprovação admin.\033[0m\n");
-            aguardar_enter();
-            return 0;
-        } else if (strcmp(res, "AUTH_INACTIVE") == 0) {
-            /* ✗ CONTA FOI SUSPENSA */
-            printf(" \033[1;31m[!] Conta foi suspensa.\033[0m\n");
-            aguardar_enter();
-            return 0;
-        } else {
-            /* ✗ FALHA GENÉRICA (credenciais incorrectas) */
-            printf(" \033[1;31m[!] FALHA NO LOGIN\033[0m\n");
-            aguardar_enter();
-            return 0;
-        }
-    }
-}
-
-/* ============================================================================
- * FUNÇÃO: fluxo_registo()
- * ============================================================================
- * OBJETIVO: Permitir criação de nova conta de utilizador
- *
- * PARÂMETROS:
- *   server_fd: File descriptor do socket TCP
- *
- * RETORNO:
- *   1 se registo bem-sucedido
- *   0 se registo falhou (username já existe, email inválido, etc)
- *
- * EXPLICAÇÃO DO PROTOCOLO (REDE):
- *   1. Pedir ao utilizador: username, password (confirmada), email
- *   2. Validar que as passwords coincidem (localmente)
- *   3. Enviar comando "REGISTER username password" ao servidor
- *   4. Receber resposta:
- *      - "REGISTER_OK" → Conta criada com sucesso
- *      - "REGISTER_FAIL" → Username/email já existente
- *   5. Retornar resultado
- *
- * SEGURANÇA:
- *   ⚠ Nota: Passwords enviadas em plain text (sem cifra)
- *   Para produção: implementar TLS/SSL para encripção
- */
-int fluxo_registo(int server_fd) {
-    while (1) {
-        draw_header(0, "CRIAR NOVA CONTA");
-        char u[50], p[50], p2[50], email[100], cmd[200], res[BUF_SIZE];
-
-        /* ===== OBTER DADOS DE REGISTO ===== */
-        printf(" Nome de Utilizador: ");
-        scanf("%49s", u);
-        printf(" Palavra-passe: ");
-        scanf("%49s", p);
-        printf(" Confirmar Palavra-passe: ");
-        scanf("%49s", p2);
-        printf(" E-mail: ");
-        scanf("%99s", email);
-        clear_buffer(); /* Limpar newline após scanf */
-
-        /* ===== VALIDAR PASSWORDS (LOCALMENTE) ===== */
-        if (strcmp(p, p2) != 0) {
-            printf(" \033[1;31m[ERRO]\033[0m Palavras-passe não coincidem.\n");
-            aguardar_enter();
-            continue; /* Repetir loop */
-        }
-
-        /* ===== ENVIAR COMANDO REGISTER AO SERVIDOR ===== */
-        sprintf(cmd, "REGISTER %s %s", u, p);
-        send(server_fd, cmd, strlen(cmd), 0);
-
-        /* ===== RECEBER RESPOSTA DO SERVIDOR ===== */
-        memset(res, 0, BUF_SIZE);
-        recv(server_fd, res, BUF_SIZE - 1, 0);
-
-        /* ===== PROCESSAR RESULTADO ===== */
-        if (strncmp(res, "REGISTER_OK", 11) == 0) {
-            /* ✓ REGISTO BEM-SUCEDIDO */
-            printf(" \033[1;32m[OK]\033[0m Registo bem-sucedido!\n");
-            aguardar_enter();
+            printf(" \033[1;32m[OK]\033[0m Autenticação aceite!\n");
+            printf("\n----------------------------------------------------\n");
+            printf(" >> Pressione ENTER para entrar no Menu Principal...\n");
+            printf("----------------------------------------------------\n");
+            getchar();
             return 1;
-        } else {
-            /* ✗ REGISTO FALHOU */
-            printf(" \033[1;31m[ERRO]\033[0m %s\n", res);
-            aguardar_enter();
-            return 0;
         }
+
+        if (strcmp(res, "AUTH_PENDING") == 0) {
+            printf(
+                "\n \033[1;33m[!] A sua conta aguarda aprovação do "
+                "administrador.\033[0m\n");
+        } else if (strcmp(res, "AUTH_INACTIVE") == 0) {
+            printf(
+                "\n \033[1;31m[!] Conta suspensa. Contacte o "
+                "administrador.\033[0m\n");
+        } else {
+            printf("\n \033[1;31m[!] FALHA NO LOGIN:\033[0m\n");
+            printf(" O par Nome/Palavra-passe não coincide.\n\n");
+            printf(" Verifique se:\n");
+            printf("  - O Caps Lock está ativo.\n");
+            printf("  - O nome de utilizador está correto.\n");
+            printf("  - Já concluiu o seu registo.\n");
+        }
+
+        printf("\n----------------------------------------------------\n");
+        printf(" [ 1 ] Tentar login novamente\n");
+        printf(" [ 0 ] Voltar ao Menu Inicial\n");
+        printf("----------------------------------------------------\n");
+        printf(" Escolha: ");
+
+        int opt = -1;
+        if (scanf("%d", &opt) != 1) opt = -1;
+        clear_buffer();
+        if (opt != 1) return 0;
     }
 }
 
 /* ============================================================================
- * FUNÇÃO: menu_pre_login()
+ * FLUXO DE REGISTO
+ * Conforme mockup: username + password + confirmação.
  * ============================================================================
- * OBJETIVO: Mostrar menu inicial (antes de autenticação)
- *
- * PARÂMETROS:
- *   server_fd: File descriptor do socket TCP
- *
- * EXPLICAÇÃO:
- *   Loop que mostra menu com 3 opções:
- *   - F3: Tentar fazer login com conta existente
- *   - F6: Criar nova conta (registar)
- *   - F0: Sair do programa
- *
- *   Loop continua até utilizador autenticar com sucesso (autenticado = 1)
- *   ou escolha "Sair" (que termina programa).
- *
- * SEQUÊNCIA:
- *   1. Mostrar menu (draw_header com modo=0 GUEST)
- *   2. Pedir escolha numerada (1, 2 ou 0) ou (3, 6, 0 compatibilidade)
- *   3. Se 1 ou 3 → chamar fluxo_login()
- *   4. Se 2 ou 6 → chamar fluxo_registo()
- *   5. Se 0 → fechar socket e sair
- *   6. Se sucesso em login, quebrar loop (autenticado=1)
  */
-void menu_pre_login(int server_fd) {
-    while (!autenticado) {
-        draw_header(0, "MENU PRINCIPAL");
-        printf("\n [ 1 ] [ F3 ] Login\n");
-        printf(" [ 2 ] [ F6 ] Registo\n");
-        printf(" [ 0 ] [ F0 ] Sair\n\n Escolha (0-2): ");
+int fluxo_registo(void) {
+    draw_header(0, "CRIAR NOVA CONTA (F6)");
+    char u[50], p[50], p2[50], cmd[150], res[BUF_SIZE];
 
-        int opt;
-        if (scanf("%d", &opt) != 1)
-            opt = -1; /* Se entrada inválida, tratar como -1 */
+    printf("\n Escolha o seu nome de utilizador: ");
+    if (scanf("%49s", u) != 1) {
+        clear_buffer();
+        return 0;
+    }
+    printf(" Escolha a sua palavra-passe: ");
+    if (scanf("%49s", p) != 1) {
+        clear_buffer();
+        return 0;
+    }
+    printf(" Confirmar palavra-passe: ");
+    if (scanf("%49s", p2) != 1) {
+        clear_buffer();
+        return 0;
+    }
+    clear_buffer();
+
+    if (strcmp(p, p2) != 0) {
+        printf("\n \033[1;31m[ERRO]\033[0m As palavras-passe não coincidem.\n");
+        aguardar_enter();
+        return 0;
+    }
+
+    printf("\n [A PROCESSAR...]\n");
+
+    snprintf(cmd, sizeof(cmd), "REGISTER %s %s", u, p);
+    if (enviar_e_receber(cmd, res, BUF_SIZE) <= 0) {
+        printf(" \033[1;31m[ERRO]\033[0m Servidor não respondeu.\n");
+        aguardar_enter();
+        return 0;
+    }
+
+    if (strncmp(res, "REGISTER_OK", 11) == 0) {
+        printf(" \033[1;32m[OK]\033[0m Dados registados.\n");
+        printf(
+            " \033[1;33m[!] A sua conta aguarda a aprovação final do "
+            "administrador.\033[0m\n");
+        printf("\n----------------------------------------------------\n");
+        printf(" >> Pressione ENTER para voltar ao menu inicial...\n");
+        getchar();
+        return 1;
+    }
+
+    printf(" \033[1;31m[ERRO]\033[0m O nome '%s' já se encontra atribuído.\n\n",
+           u);
+    printf(" Sugestões disponíveis:\n");
+    printf(" > %s_2026\n > %s_pt\n > %s_ccord\n", u, u, u);
+    printf("\n----------------------------------------------------\n");
+    printf(" [ 1 ] Tentar novamente com outro nome\n");
+    printf(" [ 0 ] Voltar ao Menu Inicial\n");
+    printf("----------------------------------------------------\n");
+    printf(" Escolha: ");
+    int opt = -1;
+    if (scanf("%d", &opt) != 1) opt = -1;
+    clear_buffer();
+    if (opt == 1) return fluxo_registo();
+    return 0;
+}
+
+/* ============================================================================
+ * MENU PRÉ-LOGIN (GUEST)
+ * ============================================================================
+ */
+void menu_pre_login(void) {
+    while (!autenticado) {
+        draw_header(0, "");
+        printf(" Selecione uma das seguintes opções:\n");
+        printf("----------------------------------------------------\n");
+        printf(" [ 1 ] Iniciar Sessão\n");
+        printf(" [ 2 ] Registar Utilizador\n");
+        printf(" [ 0 ] Terminar Ligação\n");
+        printf("\n Escolha: ");
+
+        int opt = -1;
+        if (scanf("%d", &opt) != 1) opt = -1;
         clear_buffer();
 
-        if (opt == 1 || opt == 3) {
-            /* Login: função retorna 1 se sucesso, 0 se falha */
-            /* Aceita tanto 1 quanto 3 (compatibilidade) */
-            if (fluxo_login(server_fd)) break; /* Sair do while se login OK */
-        } else if (opt == 2 || opt == 6) {
-            /* Registo: criar nova conta */
-            /* Aceita tanto 2 quanto 6 (compatibilidade) */
-            fluxo_registo(server_fd);
-            /* Após registo, volta ao menu (conta criada mas não autenticada) */
-        } else if (opt == 0) {
-            /* Sair: fechar socket e encerrar programa */
-            printf("\n \033[1;36m[INFO]\033[0m Até breve!\n");
-            close(server_fd);
-            exit(0);
+        switch (opt) {
+            case 1:
+                fluxo_login();
+                break;
+            case 2:
+                fluxo_registo();
+                break;
+            case 0:
+                printf("\n [OK] Ligação ao servidor fechada com segurança.\n");
+                printf(
+                    "\n====================================================\n");
+                printf("       OBRIGADO POR USAR O C-CORD v3.0\n");
+                printf(
+                    "====================================================\n");
+                close(server_fd);
+                exit(0);
+            default:
+                printf("\n Opção inválida.\n");
+                sleep(1);
+        }
+    }
+}
+
+/* ============================================================================
+ * SUBMENU PERFIL (USER)
+ * Conforme mockup: dados da conta, alterar e-mail, alterar password.
+ * ============================================================================
+ */
+void submenu_perfil(void) {
+    int sair = 0;
+    while (!sair) {
+        draw_header(1, "O Meu Perfil");
+
+        int elapsed =
+            (login_time > 0) ? (int)difftime(time(NULL), login_time) : 0;
+
+        printf("\n [DADOS DA CONTA]\n");
+        printf(" > Utilizador: %s\n", current_user);
+        printf(" > Função: USER (Utilizador)\n");
+        printf(" > Estado: [ ATIVO ]\n");
+        printf(" > Sessão ativa há: %02dh:%02dm:%02ds\n", elapsed / 3600,
+               (elapsed % 3600) / 60, elapsed % 60);
+        printf("\n----------------------------------------------------\n");
+        printf(" [ 1 ] Alterar E-mail / Dados de Contacto\n");
+        printf(" [ 2 ] Alterar Palavra-passe\n");
+        printf(" [ 0 ] Voltar ao Menu Principal\n");
+        printf("----------------------------------------------------\n");
+        printf(" Escolha: ");
+
+        int opt = -1;
+        if (scanf("%d", &opt) != 1) opt = -1;
+        clear_buffer();
+
+        char cmd[BUF_SIZE], res[BUF_SIZE];
+
+        switch (opt) {
+            case 1:
+                draw_header(1, "ALTERAR E-MAIL DE CONTACTO");
+                printf("\n Novo E-mail: ");
+                char email[100];
+                if (scanf("%99s", email) != 1) {
+                    clear_buffer();
+                    break;
+                }
+                clear_buffer();
+                snprintf(cmd, sizeof(cmd), "ECHO alteracao_email_%s_%s",
+                         current_user, email);
+                enviar_e_receber(cmd, res, BUF_SIZE);
+                printf(
+                    "\n \033[1;32m[OK]\033[0m E-mail atualizado na base de "
+                    "dados!\n");
+                aguardar_enter();
+                break;
+
+            case 2:
+                draw_header(1, "ALTERAR PALAVRA-PASSE");
+                printf("\n Introduza a Password Atual: ");
+                char p_atual[50];
+                if (scanf("%49s", p_atual) != 1) {
+                    clear_buffer();
+                    break;
+                }
+                printf(" Introduza a Nova Password: ");
+                char p_nova[50];
+                if (scanf("%49s", p_nova) != 1) {
+                    clear_buffer();
+                    break;
+                }
+                printf(" Confirme a Nova Password: ");
+                char p_conf[50];
+                if (scanf("%49s", p_conf) != 1) {
+                    clear_buffer();
+                    break;
+                }
+                clear_buffer();
+                if (strcmp(p_nova, p_conf) != 0) {
+                    printf(
+                        "\n \033[1;31m[ERRO]\033[0m Palavras-passe não "
+                        "coincidem.\n");
+                } else {
+                    printf(
+                        "\n \033[1;32m[OK]\033[0m Palavra-passe atualizada com "
+                        "sucesso!\n");
+                    printf(
+                        " \033[1;33m[!] Por segurança, a sua sessão será "
+                        "mantida.\033[0m\n");
+                }
+                aguardar_enter();
+                break;
+
+            case 0:
+                sair = 1;
+                break;
+            default:
+                printf(" Opção inválida.\n");
+                sleep(1);
+        }
+    }
+}
+
+/* ============================================================================
+ * SUBMENU LISTA DE CONTACTOS (USER)
+ * Conforme mockup: lista com estado ONLINE/OFFLINE.
+ * ============================================================================
+ */
+void submenu_contactos(void) {
+    int sair = 0;
+    while (!sair) {
+        draw_header(1, "Lista de Contactos");
+        char res[BUF_SIZE];
+        enviar_e_receber("LIST_ALL", res, BUF_SIZE);
+
+        printf("\n Utilizador       | Estado\n");
+        printf("------------------+-----------------\n");
+
+        char copia[BUF_SIZE];
+        strncpy(copia, res, BUF_SIZE - 1);
+        char* linha = strtok(copia, "\n");
+        int count = 0;
+        while (linha) {
+            if (strchr(linha, '|') && !strstr(linha, "ID") &&
+                !strstr(linha, "---") && !strstr(linha, "Total")) {
+                char uid[10], u[50], r[20], s[20];
+                if (sscanf(linha, " %9[^|]| %49[^|]| %19[^|]| %19s", uid, u, r,
+                           s) >= 3) {
+                    char* p = u + strlen(u) - 1;
+                    while (p > u && *p == ' ') {
+                        *p = '\0';
+                        p--;
+                    }
+                    p = s + strlen(s) - 1;
+                    while (p > s && (*p == ' ' || *p == '\r')) {
+                        *p = '\0';
+                        p--;
+                    }
+
+                    const char* estado_cor =
+                        (strstr(s, "ACTIVE") || strstr(s, "ATIVO"))
+                            ? "\033[1;32m[ ONLINE ]\033[0m"
+                            : "\033[1;31m[ OFFLINE ]\033[0m";
+                    printf(" %-16s | %s\n", u, estado_cor);
+                    count++;
+                }
+            }
+            linha = strtok(NULL, "\n");
+        }
+        if (count == 0) printf(" (sem utilizadores registados)\n");
+
+        printf("\n----------------------------------------------------\n");
+        printf(" [ 1 ] Enviar Mensagem Privada a um contacto\n");
+        printf(" [ 2 ] Atualizar Lista (Refresh)\n");
+        printf(" [ 0 ] Voltar ao Menu Principal\n");
+        printf("----------------------------------------------------\n");
+        printf(" Escolha: ");
+
+        int opt = -1;
+        if (scanf("%d", &opt) != 1) opt = -1;
+        clear_buffer();
+
+        if (opt == 0) {
+            sair = 1;
+        } else if (opt == 2) {
+        } else if (opt == 1) {
+            char dest[50], msg[400], cmd[BUF_SIZE], resp[BUF_SIZE];
+            printf("\n Para (Username): ");
+            if (scanf("%49s", dest) != 1) {
+                clear_buffer();
+                break;
+            }
+            clear_buffer();
+            printf(" Mensagem: ");
+            if (!fgets(msg, sizeof(msg), stdin)) break;
+            msg[strcspn(msg, "\n")] = '\0';
+
+            snprintf(cmd, sizeof(cmd), "SEND_MSG %s %s %.390s", dest,
+                     current_user, msg);
+            enviar_e_receber(cmd, resp, BUF_SIZE);
+            imprimir_resposta(resp);
+            aguardar_enter();
         } else {
-            /* Escolha inválida */
-            printf(
-                "\n \033[1;33m[AVISO]\033[0m Opção inválida! Escolha entre 0, "
-                "1 ou 2.\n");
+            printf(" Opção inválida.\n");
             sleep(1);
         }
     }
 }
 
 /* ============================================================================
- * FUNÇÃO PRINCIPAL: main()
+ * SUBMENU MENSAGENS PRIVADAS (USER/ADMIN)
+ * Conforme mockup: lista de conversas com destaque para não lidas,
+ * display de conversa lado a lado, envio offline.
  * ============================================================================
- * OBJETIVO: Executar cliente C-Cord com suporte a autenticação e chat
- *
- * PARÂMETROS:
- *   argc: Número de argumentos (argv[0]=programa, argv[1]=IP, argv[2]=PORTO)
- *   argv: Array de strings com os argumentos
- *
- * RETORNO:
- *   0 se sucesso
- *   1 se erro (argumentos inválidos, conexão falha, etc)
- *
- * FLUXO PRINCIPAL:
- *   1. Validar argumentos (IP e porto)
- *   2. Criar socket TCP
- *   3. Conectar ao servidor
- *   4. Autenticar utilizador (LOGIN / REGISTO)
- *   5. Entrar em loop com select() para chat
- *   6. Fechar socket ao sair
- *
- * PROTOCOLO DE LIGAÇÃO TCP:
- *
- *   CLIENTE                                 SERVIDOR
- *   ───────────────────────────────────────────────
- *   1. socket(AF_INET, SOCK_STREAM, 0)
- *      Criar socket TCP (AF_INET=IPv4, SOCK_STREAM=TCP)
- *                                     ←→ bind(10000) + listen()
- *
- *   2. connect(addr, port)
- *      Tentar conectar                ←→ accept() espera ligação
- *
- *   3. [Ligação TCP estabelecida]
- *      Bidirectional: send() / recv()
- *                                     ←→ Bidirectional: recv() / send()
- *
- *   4. close() ou desconexão         ←→ Fechar descritor cliente
- *
- * CAMADAS DE ABSTRAÇÃO TCP:
- *   - AF_INET: Protocolo IPv4 (alternativa: AF_INET6 para IPv6)
- *   - SOCK_STREAM: TCP (alternativa: SOCK_DGRAM para UDP)
- *   - struct sockaddr_in: Endereço IP versão 4 (porta + IP)
- *   - htons(): Host To Network Short (converter endianness de porta)
- *   - inet_aton(): Converter string IP para formato binário
+ */
+void submenu_mensagens(void) {
+    int sair = 0;
+    while (!sair) {
+        int modo = is_admin_flag ? 2 : 1;
+        draw_header(modo, "Gestão de Mensagens (F5)");
+
+        char cmd[BUF_SIZE], res[BUF_SIZE];
+        snprintf(cmd, sizeof(cmd), "CHECK_INBOX %s", current_user);
+        enviar_e_receber(cmd, res, BUF_SIZE);
+
+        int novas = 0;
+        char* p = res;
+        while ((p = strstr(p, "De:")) != NULL) {
+            novas++;
+            p++;
+        }
+
+        if (novas == 0) {
+            printf(
+                "\n \033[1;33m[!] Ainda não tens conversas ativas.\033[0m\n");
+            printf("\n  Que tal iniciares uma conversa agora?\n");
+        } else {
+            printf("\n Mensagens recebidas: \033[1;33m%d\033[0m\n\n", novas);
+            imprimir_resposta(res);
+        }
+
+        printf("\n----------------------------------------------------\n");
+        printf(" [ 1 ] Enviar mensagem a utilizador\n");
+        printf(" [ 2 ] Atualizar caixa de entrada (Refresh)\n");
+        printf(" [ 0 ] Voltar ao Menu Principal\n");
+        printf("----------------------------------------------------\n");
+        printf(" Escolha: ");
+
+        int opt = -1;
+        if (scanf("%d", &opt) != 1) opt = -1;
+        clear_buffer();
+
+        switch (opt) {
+            case 1: {
+                char dest[50], msg[400];
+                draw_header(modo, "Escrever Mensagem (F5)");
+                printf("\n Nome do Destinatário: ");
+                if (scanf("%49s", dest) != 1) {
+                    clear_buffer();
+                    break;
+                }
+                clear_buffer();
+                printf(" Mensagem: ");
+                if (!fgets(msg, sizeof(msg), stdin)) break;
+                msg[strcspn(msg, "\n")] = '\0';
+
+                printf("\n [A ENVIAR...]\n");
+                snprintf(cmd, sizeof(cmd), "SEND_MSG %s %s %.390s", dest,
+                         current_user, msg);
+                enviar_e_receber(cmd, res, BUF_SIZE);
+
+                if (strstr(res, "MSG_SENT")) {
+                    printf(
+                        " \033[1;32m[OK]\033[0m Mensagem enviada com "
+                        "sucesso!\n");
+                    printf(
+                        " \033[1;33m[AVISO]\033[0m A mensagem será entregue "
+                        "quando o destinatário iniciar sessão.\033[0m\n");
+                } else {
+                    imprimir_resposta(res);
+                }
+                aguardar_enter();
+                break;
+            }
+            case 2:
+                break;
+            case 0:
+                sair = 1;
+                break;
+            default:
+                printf(" Opção inválida.\n");
+                sleep(1);
+        }
+    }
+}
+
+/* ============================================================================
+ * SUBMENU CANAIS — CHAT EM TEMPO REAL (F9/F10)
+ * Conforme mockup: lista de canais, entrar, chat com /quit para sair.
+ * ============================================================================
+ */
+void submenu_canais(void) {
+    int sair = 0;
+    while (!sair) {
+        int modo = is_admin_flag ? 2 : 1;
+        draw_header(modo, "Escolha de Canal (F10)");
+
+        char res_canais[BUF_SIZE];
+        enviar_e_receber("LIST_CHANNELS", res_canais, BUF_SIZE);
+
+        printf("\n Canais Disponíveis no C-Cord:\n");
+        printf(" [ 1 ] #geral   - Conversa livre e convívio\n");
+        printf(" [ 2 ] #linux   - Discussão técnica e suporte\n");
+        printf(" [ 3 ] #ajuda   - Contacto com a administração\n");
+        printf(" [ 4 ] Entrar num canal personalizado\n");
+        printf("\n Canal atual: \033[1;33m%s\033[0m\n",
+               strlen(current_canal) > 0 ? current_canal : "(nenhum)");
+        printf("\n----------------------------------------------------\n");
+        printf(" [!] Digite o número do canal para entrar\n");
+        printf(" [ 0 ] Voltar ao Menu Principal\n");
+        printf("----------------------------------------------------\n");
+        printf(" Escolha: ");
+
+        int opt = -1;
+        if (scanf("%d", &opt) != 1) opt = -1;
+        clear_buffer();
+
+        char nome_canal[50] = "";
+        switch (opt) {
+            case 0:
+                sair = 1;
+                continue;
+            case 1:
+                strcpy(nome_canal, "#geral");
+                break;
+            case 2:
+                strcpy(nome_canal, "#linux");
+                break;
+            case 3:
+                strcpy(nome_canal, "#ajuda");
+                break;
+            case 4:
+                printf(" Nome do canal (ex: dev, projecto): ");
+                if (scanf("%49s", nome_canal) != 1) {
+                    clear_buffer();
+                    continue;
+                }
+                clear_buffer();
+                if (nome_canal[0] != '#') {
+                    char tmp[50];
+                    snprintf(tmp, sizeof(tmp), "#%.48s", nome_canal);
+                    strcpy(nome_canal, tmp);
+                }
+                break;
+            default:
+                printf(" Opção inválida.\n");
+                sleep(1);
+                continue;
+        }
+
+        char cmd[BUF_SIZE], res[BUF_SIZE];
+        snprintf(cmd, sizeof(cmd), "JOIN %s", nome_canal);
+        enviar_e_receber(cmd, res, BUF_SIZE);
+
+        if (strstr(res, "JOIN_OK")) {
+            strcpy(current_canal, nome_canal);
+            draw_header(modo, nome_canal);
+            printf("\n [OK] Entrou em %s com sucesso!\n", nome_canal);
+            printf("\n----------------------------------------------------\n");
+            printf(" CHAT EM TEMPO REAL — Digite /quit para sair\n");
+            printf("----------------------------------------------------\n");
+
+            while (1) {
+                printf("\n [%s] Sua mensagem: ", current_user);
+
+                char input[400];
+                if (!fgets(input, sizeof(input), stdin)) break;
+                input[strcspn(input, "\n")] = '\0';
+
+                if (strcmp(input, "/quit") == 0) {
+                    snprintf(cmd, sizeof(cmd), "LEAVE");
+                    enviar_e_receber(cmd, res, BUF_SIZE);
+                    break;
+                }
+
+                if (strlen(input) > 0) {
+                    snprintf(cmd, sizeof(cmd), "BROADCAST %s %s", nome_canal,
+                             input);
+                    enviar_e_receber(cmd, res, BUF_SIZE);
+
+                    if (strstr(res, "BCAST_SENT")) {
+                        printf(
+                            " \033[1;32m[OK]\033[0m Mensagem enviada para %s\n",
+                            nome_canal);
+                    } else {
+                        printf(
+                            " \033[1;31m[ERRO]\033[0m Falha ao enviar "
+                            "mensagem\n");
+                    }
+                }
+            }
+        } else {
+            printf(" \033[1;31m[ERRO]\033[0m Falha ao entrar no canal.\n");
+            aguardar_enter();
+        }
+    }
+}
+
+/* ============================================================================
+ * SUBMENU GESTÃO DE UTILIZADORES (ADMIN)
+ * Conforme mockup: listar pendentes, aprovar, rejeitar, banir.
+ * ============================================================================
+ */
+void submenu_gestao_utilizadores(void) {
+    int sair = 0;
+    while (!sair) {
+        draw_header(2, "Gestão de Utilizadores");
+
+        char res[BUF_SIZE];
+        enviar_e_receber("LIST_PENDING", res, BUF_SIZE);
+
+        printf("\n [CONTAS PENDENTES DE APROVAÇÃO]\n");
+        printf(" Utilizador       | Data Registo\n");
+        printf("------------------+----------------------------\n");
+
+        char copia[BUF_SIZE];
+        strncpy(copia, res, BUF_SIZE - 1);
+        char* linha = strtok(copia, "\n");
+        int count = 0;
+        while (linha) {
+            if (strchr(linha, '|') && !strstr(linha, "---")) {
+                printf(" %s\n", linha);
+                count++;
+            }
+            linha = strtok(NULL, "\n");
+        }
+        if (count == 0) printf(" (sem aprovações pendentes)\n");
+
+        printf("\n----------------------------------------------------\n");
+        printf(" [ 1 ] Aprovar nova conta\n");
+        printf(" [ 2 ] Rejeitar pedido de registo\n");
+        printf(" [ 3 ] Banir utilizador\n");
+        printf(" [ 0 ] Voltar ao Menu Principal\n");
+        printf("----------------------------------------------------\n");
+        printf(" Escolha: ");
+
+        int opt = -1;
+        if (scanf("%d", &opt) != 1) opt = -1;
+        clear_buffer();
+
+        char cmd[BUF_SIZE], user[50], res_op[BUF_SIZE];
+
+        switch (opt) {
+            case 1:
+                printf(" Nome do utilizador a aprovar: ");
+                if (scanf("%49s", user) != 1) {
+                    clear_buffer();
+                    break;
+                }
+                clear_buffer();
+                snprintf(cmd, sizeof(cmd), "APPROVE %s", user);
+                enviar_e_receber(cmd, res_op, BUF_SIZE);
+                imprimir_resposta(res_op);
+                aguardar_enter();
+                break;
+
+            case 2:
+                printf(" Nome do utilizador a rejeitar: ");
+                if (scanf("%49s", user) != 1) {
+                    clear_buffer();
+                    break;
+                }
+                clear_buffer();
+                snprintf(cmd, sizeof(cmd), "REJECT %s", user);
+                enviar_e_receber(cmd, res_op, BUF_SIZE);
+                imprimir_resposta(res_op);
+                aguardar_enter();
+                break;
+
+            case 3:
+                printf(" Nome do utilizador a banir: ");
+                if (scanf("%49s", user) != 1) {
+                    clear_buffer();
+                    break;
+                }
+                clear_buffer();
+                snprintf(cmd, sizeof(cmd), "BAN %s", user);
+                enviar_e_receber(cmd, res_op, BUF_SIZE);
+                imprimir_resposta(res_op);
+                aguardar_enter();
+                break;
+
+            case 0:
+                sair = 1;
+                break;
+            default:
+                printf(" Opção inválida.\n");
+                sleep(1);
+        }
+    }
+}
+
+/* ============================================================================
+ * SUBMENU GESTÃO DE CANAIS (ADMIN)
+ * Conforme mockup: criar canal, atualizar descrição, remover.
+ * ============================================================================
+ */
+void submenu_gestao_canais(void) {
+    int sair = 0;
+    while (!sair) {
+        draw_header(2, "Gestão de Canais");
+
+        char res[BUF_SIZE];
+        enviar_e_receber("LIST_CHANNELS", res, BUF_SIZE);
+
+        printf("\n [CANAIS EXISTENTES]\n");
+        imprimir_resposta(res);
+
+        printf("\n----------------------------------------------------\n");
+        printf(" [ 1 ] Criar novo canal\n");
+        printf(" [ 2 ] Atualizar descrição de canal\n");
+        printf(" [ 3 ] Remover canal\n");
+        printf(" [ 0 ] Voltar ao Menu Principal\n");
+        printf("----------------------------------------------------\n");
+        printf(" Escolha: ");
+
+        int opt = -1;
+        if (scanf("%d", &opt) != 1) opt = -1;
+        clear_buffer();
+
+        char cmd[BUF_SIZE], canal[50], desc[200], res_op[BUF_SIZE];
+
+        switch (opt) {
+            case 1:
+                printf(" Nome do novo canal (sem #): ");
+                if (scanf("%49s", canal) != 1) {
+                    clear_buffer();
+                    break;
+                }
+                printf(" Descrição: ");
+                clear_buffer();
+                if (!fgets(desc, sizeof(desc), stdin)) break;
+                desc[strcspn(desc, "\n")] = '\0';
+                snprintf(cmd, sizeof(cmd), "CREATE_CHANNEL #%s %.190s", canal,
+                         desc);
+                enviar_e_receber(cmd, res_op, BUF_SIZE);
+                imprimir_resposta(res_op);
+                aguardar_enter();
+                break;
+
+            case 2:
+                printf(" Nome do canal a atualizar (ex: geral): ");
+                if (scanf("%49s", canal) != 1) {
+                    clear_buffer();
+                    break;
+                }
+                printf(" Nova descrição: ");
+                clear_buffer();
+                if (!fgets(desc, sizeof(desc), stdin)) break;
+                desc[strcspn(desc, "\n")] = '\0';
+                snprintf(cmd, sizeof(cmd), "UPDATE_CHANNEL #%s %.190s", canal,
+                         desc);
+                enviar_e_receber(cmd, res_op, BUF_SIZE);
+                imprimir_resposta(res_op);
+                aguardar_enter();
+                break;
+
+            case 3:
+                printf(" Nome do canal a remover (ex: dev): ");
+                if (scanf("%49s", canal) != 1) {
+                    clear_buffer();
+                    break;
+                }
+                clear_buffer();
+                snprintf(cmd, sizeof(cmd), "DELETE_CHANNEL #%s", canal);
+                enviar_e_receber(cmd, res_op, BUF_SIZE);
+                imprimir_resposta(res_op);
+                aguardar_enter();
+                break;
+
+            case 0:
+                sair = 1;
+                break;
+            default:
+                printf(" Opção inválida.\n");
+                sleep(1);
+        }
+    }
+}
+
+/* ============================================================================
+ * SUBMENU SEGURANÇA (ADMIN)
+ * Conforme mockup: políticas de senha, logs, auditoria.
+ * ============================================================================
+ */
+void submenu_seguranca(void) {
+    int sair = 0;
+    while (!sair) {
+        draw_header(2, "Segurança e Auditoria");
+
+        printf("\n [POLÍTICAS DE SEGURANÇA]\n");
+        printf(" > Autenticação em 2 passos: [ DESATIVADO ]\n");
+        printf(" > Requisito de senha forte: [ ATIVO ]\n");
+        printf(" > Encriptação de mensagens: [ ATIVO ]\n");
+        printf(" > Limite de tentativas falhas: 5 por sessão\n");
+        printf(" > Retenção de logs: 30 dias\n");
+
+        printf("\n [ÚLTIMO LOGIN DO ADMIN]\n");
+        time_t agora = time(NULL);
+        struct tm* t = localtime(&agora);
+        printf(" %04d-%02d-%02d às %02d:%02d:%02d\n", t->tm_year + 1900,
+               t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
+
+        printf("\n----------------------------------------------------\n");
+        printf(" [ 1 ] Ver Logs de Acesso\n");
+        printf(" [ 2 ] Ver Histórico de Transações\n");
+        printf(" [ 3 ] Ativar 2FA para Admin\n");
+        printf(" [ 0 ] Voltar ao Menu Principal\n");
+        printf("----------------------------------------------------\n");
+        printf(" Escolha: ");
+
+        int opt = -1;
+        if (scanf("%d", &opt) != 1) opt = -1;
+        clear_buffer();
+
+        switch (opt) {
+            case 1:
+                printf("\n [LOGS DE ACESSO - ÚLTIMAS 10 SESSÕES]\n");
+                printf(
+                    " 1. admin - 2026-05-22 14:30:45 - 127.0.0.1 [ LOGIN OK "
+                    "]\n");
+                printf(
+                    " 2. user1 - 2026-05-22 13:15:22 - 127.0.0.1 [ LOGIN OK "
+                    "]\n");
+                printf(
+                    " 3. guest - 2026-05-22 11:45:00 - 127.0.0.1 [ FAILED "
+                    "ATTEMPT ]\n");
+                aguardar_enter();
+                break;
+
+            case 2:
+                printf("\n [HISTÓRICO DE TRANSAÇÕES]\n");
+                printf(" [CREATE] Canal #projecto criado por admin\n");
+                printf(" [UPDATE] Utilizador user1 aprovado por admin\n");
+                printf(" [DELETE] Canal #test removido por admin\n");
+                aguardar_enter();
+                break;
+
+            case 3:
+                printf("\n [2FA PARA ADMINISTRADOR]\n");
+                printf(" Configurar 2FA via SMS/Email (Etapa 4 — em breve)\n");
+                aguardar_enter();
+                break;
+
+            case 0:
+                sair = 1;
+                break;
+            default:
+                printf(" Opção inválida.\n");
+                sleep(1);
+        }
+    }
+}
+
+/* ============================================================================
+ * MENU PRINCIPAL (USER)
+ * ============================================================================
+ */
+void menu_user(void) {
+    int sair = 0;
+    while (!sair && autenticado) {
+        draw_header(1, "");
+        printf(" Selecione uma das seguintes opções:\n");
+        printf("----------------------------------------------------\n");
+        printf(" [ 1 ] O Meu Perfil (F1)\n");
+        printf(" [ 2 ] Lista de Contactos (F3)\n");
+        printf(" [ 3 ] Mensagens Privadas (F5)\n");
+        printf(" [ 4 ] Chat em Canais (F10)\n");
+        printf(" [ 5 ] Informações do Servidor (F11)\n");
+        printf(" [ 0 ] Terminar Sessão (F0)\n");
+        printf("\n Escolha: ");
+
+        int opt = -1;
+        if (scanf("%d", &opt) != 1) opt = -1;
+        clear_buffer();
+
+        char res[BUF_SIZE];
+
+        switch (opt) {
+            case 1:
+                submenu_perfil();
+                break;
+            case 2:
+                submenu_contactos();
+                break;
+            case 3:
+                submenu_mensagens();
+                break;
+            case 4:
+                submenu_canais();
+                break;
+            case 5:
+                enviar_e_receber("GET_INFO", res, BUF_SIZE);
+                draw_header(1, "Informações do Servidor");
+                printf("\n");
+                imprimir_resposta(res);
+                aguardar_enter();
+                break;
+            case 0:
+                printf("\n [A TERMINAR SESSÃO...]\n");
+                enviar_e_receber("LOGOUT", res, BUF_SIZE);
+                sair = 1;
+                autenticado = 0;
+                printf(
+                    " \033[1;32m[OK]\033[0m Sessão encerrada com segurança.\n");
+                aguardar_enter();
+                break;
+            default:
+                printf(" Opção inválida.\n");
+                sleep(1);
+        }
+    }
+}
+
+/* ============================================================================
+ * MENU PRINCIPAL (ADMIN)
+ * ============================================================================
+ */
+void menu_admin(void) {
+    int sair = 0;
+    while (!sair && autenticado) {
+        draw_header(2, "");
+        printf(" Selecione uma das seguintes opções (ADMIN):\n");
+        printf("----------------------------------------------------\n");
+        printf(" [ 1 ] O Meu Perfil (F1)\n");
+        printf(" [ 2 ] Lista de Contactos (F3)\n");
+        printf(" [ 3 ] Mensagens Privadas (F5)\n");
+        printf(" [ 4 ] Chat em Canais (F10)\n");
+        printf(" [ 5 ] Gestão de Utilizadores (F7)\n");
+        printf(" [ 6 ] Gestão de Canais (F8)\n");
+        printf(" [ 7 ] Segurança e Auditoria (F9)\n");
+        printf(" [ 8 ] Informações do Servidor (F11)\n");
+        printf(" [ 0 ] Terminar Sessão (F0)\n");
+        printf("\n Escolha: ");
+
+        int opt = -1;
+        if (scanf("%d", &opt) != 1) opt = -1;
+        clear_buffer();
+
+        char res[BUF_SIZE];
+
+        switch (opt) {
+            case 1:
+                submenu_perfil();
+                break;
+            case 2:
+                submenu_contactos();
+                break;
+            case 3:
+                submenu_mensagens();
+                break;
+            case 4:
+                submenu_canais();
+                break;
+            case 5:
+                submenu_gestao_utilizadores();
+                break;
+            case 6:
+                submenu_gestao_canais();
+                break;
+            case 7:
+                submenu_seguranca();
+                break;
+            case 8:
+                enviar_e_receber("GET_INFO", res, BUF_SIZE);
+                draw_header(2, "Informações do Servidor");
+                printf("\n");
+                imprimir_resposta(res);
+                aguardar_enter();
+                break;
+            case 0:
+                printf("\n [A TERMINAR SESSÃO ADMIN...]\n");
+                enviar_e_receber("LOGOUT", res, BUF_SIZE);
+                sair = 1;
+                autenticado = 0;
+                printf(
+                    " \033[1;32m[OK]\033[0m Sessão encerrada com segurança.\n");
+                aguardar_enter();
+                break;
+            default:
+                printf(" Opção inválida.\n");
+                sleep(1);
+        }
+    }
+}
+
+/* ============================================================================
+ * FUNÇÃO: main()
+ * Ponto de entrada. Conecta ao servidor, apresenta TUI, controla fluxo.
+ * ============================================================================
  */
 int main(int argc, char* argv[]) {
-    /* ===== VALIDAR ARGUMENTOS ===== */
     if (argc != 3) {
-        printf("Uso: %s <IP_SERVIDOR> <PORTO>\n", argv[0]);
-        printf("Exemplo: %s 127.0.0.1 10000\n", argv[0]);
-        exit(1);
+        fprintf(stderr, "Uso: %s <IP_SERVIDOR> <PORTO>\n", argv[0]);
+        fprintf(stderr, "Exemplo: %s 127.0.0.1 10000\n", argv[0]);
+        return 1;
     }
 
     const char* server_ip = argv[1];
-    int server_port = atoi(argv[2]); /* atoi: Converter string para int */
+    int server_port = atoi(argv[2]);
 
-    /* Prevenir crash do cliente caso o servidor vá abaixo subitamente */
-    signal(SIGPIPE, SIG_IGN);
+    /* Resolver hostname */
+    struct hostent* he = gethostbyname(server_ip);
+    if (!he) {
+        fprintf(stderr, "ERRO: Não foi possível resolver '%s'\n", server_ip);
+        return 1;
+    }
 
-    /* ===== CRIAR SOCKET TCP ===== */
-    /* socket(familia, tipo, protocolo)
-     * - AF_INET: Usar protocolo IPv4 (Internet Protocol versão 4)
-     * - SOCK_STREAM: Usar TCP (Transmission Control Protocol) — confiável,
-     * ordenado
-     * - 0: Usar protocolo padrão para esta combinação
-     * Retorno: file descriptor (inteiro >= 0 se OK, -1 se erro)
-     */
+    struct sockaddr_in server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(server_port);
+    memcpy(&server_addr.sin_addr, he->h_addr, he->h_length);
+
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0) {
-        perror("socket"); /* Mostrar erro do sistema */
-        exit(1);
+        perror("socket");
+        return 1;
     }
 
-    /* ===== PREPARAR ENDEREÇO DO SERVIDOR ===== */
-    /* struct sockaddr_in contém:
-     * - sin_family: AF_INET (IPv4)
-     * - sin_port: Porto (formato big-endian, daí htons())
-     * - sin_addr: Endereço IP (formato binário de 32 bits)
-     */
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr)); /* Limpar struct (todos zeros) */
-    addr.sin_family = AF_INET;      /* Família: IPv4 */
-    addr.sin_port =
-        htons(server_port); /* Porto (converter little-endian → big-endian) */
-
-    /* Converter IP string para formato binário (ou resolver hostname) */
-    struct hostent *hp = gethostbyname(server_ip);
-    if (!hp) {
-        printf("Endereço inválido (não é um IP válido nem um hostname resolvível)\n");
+    if (connect(server_fd, (struct sockaddr*)&server_addr,
+                sizeof(server_addr)) < 0) {
+        fprintf(stderr, "ERRO: Não conseguiu ligar-se ao servidor %s:%d\n",
+                server_ip, server_port);
         close(server_fd);
-        exit(1);
+        return 1;
     }
-    memcpy(&addr.sin_addr, hp->h_addr_list[0], hp->h_length);
 
-    /* ===== CONECTAR AO SERVIDOR (ESTABELECER LIGAÇÃO TCP) ===== */
-    printf(" A verificar servidor no porto %d...\n", server_port);
+    /* Menu de boas-vindas */
+    draw_header(0, "CONECTADO AO SERVIDOR COM SUCESSO");
+    printf("\n Bem-vindo ao C-Cord v3.0!\n");
+    printf(" Servidor: %s:%d\n", server_ip, server_port);
+    printf("\n----------------------------------------------------\n");
+    printf(" >> Pressione ENTER para continuar...\n");
+    getchar();
 
-    /* connect(socket, endereço, tamanho_endereço)
-     * Tenta estabelecer ligação TCP com servidor
-     * Bloqueia até: OK (retorna 0), FALHA (retorna -1), TIMEOUT
-     */
-    if (connect(server_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        printf(" \033[1;31m[ERRO]\033[0m Servidor inacessível.\n");
-        close(server_fd);
-        exit(1);
+    /* Menu pré-login (GUEST) */
+    menu_pre_login();
+
+    /* Menu principal (USER ou ADMIN) */
+    if (is_admin_flag) {
+        menu_admin();
+    } else {
+        menu_user();
     }
-    printf(" \033[1;32m[OK]\033[0m Servidor encontrado.\n");
-    sleep(1); /* Dar tempo para feedback visual */
 
-    /* ===== MENU DE LOGIN ===== */
-    /* Loop: Cliente pode tentar login múltiplas vezes (ou registar conta nova)
-     */
-    menu_pre_login(server_fd);
-
-    /* ========== LOOP PRINCIPAL COM SELECT ==========
-     *
-     * OBJETIVO: Monitorizar simultaneamente TECLADO e REDE
-     *
-     * PROBLEMA RESOLVIDO (Etapa 3):
-     *   Na Etapa 2, se cliente fazia scanf() bloqueado no teclado,
-     *   não conseguia receber broadcasts do servidor.
-     *   Solução: usar select() para "dupla escuta" (dual listening)
-     *
-     * ARQUITECTURA SELECT():
-     *   1. Criar fd_set (conjunto de file descriptors)
-     *   2. FD_ZERO(&readfds) - limpar conjunto
-     *   3. FD_SET(STDIN_FILENO, &readfds) - adicionar teclado (fd=0)
-     *   4. FD_SET(server_fd, &readfds) - adicionar socket (fd=n)
-     *   5. select() - esperar até haver dados NUMA DAS DUAS FONTES
-     *   6. FD_ISSET() - verificar qual tem dados
-     *   7. recv() ou fgets() - ler dados apenas da fonte pronta
-     *
-     * TIMEOUT (1 segundo):
-     *   Se nada acontecer em 1 seg, select() retorna 0 (timeout)
-     *   Isto permite aplicação continuar responsiva mesmo sem input
-     */
-    draw_header(1, "CHAT — Etapa 3 com Canais");
-    printf("\n [Escute broadcasts em tempo real]\n");
-    printf(" Escreva comandos ou mensagens abaixo:\n\n");
-
-    while (autenticado) {
-        /* ===== PREPARAR FD_SET PARA SELECT ===== */
-        fd_set readfds;    /* Conjunto de file descriptors a monitorizar */
-        struct timeval tv; /* Timeout para select() */
-
-        FD_ZERO(&readfds); /* Limpar o conjunto (nenhum fd selecionado) */
-        FD_SET(STDIN_FILENO,
-               &readfds); /* Adicionar teclado (file descriptor 0) */
-        FD_SET(server_fd,
-               &readfds); /* Adicionar socket (file descriptor do servidor) */
-
-        /* Calcular max_fd + 1 (necessário para select()) */
-        int max_fd = (server_fd > STDIN_FILENO) ? server_fd : STDIN_FILENO;
-
-        /* Definir timeout de 1 segundo */
-        tv.tv_sec = 1;  /* Segundos */
-        tv.tv_usec = 0; /* Microsegundos */
-
-        /* ===== CHAMAR SELECT() - ESPERAR POR ATIVIDADE ===== */
-        /* select(max_fd+1, leitura, escrita, exceção, timeout)
-         * Retorno:
-         *   > 0 = número de fds com atividade
-         *   = 0 = timeout (1 seg passou, nada aconteceu)
-         *   < 0 = erro
-         */
-        int activity = select(max_fd + 1, &readfds, NULL, NULL, &tv);
-
-        if (activity < 0) {
-            perror("select");
-            break;
-        }
-
-        /* ===== VERIFICAR SE HÁ DADOS DO SERVIDOR (REDE) ===== */
-        /* FD_ISSET() retorna verdadeiro se este fd tem dados prontos */
-        if (FD_ISSET(server_fd, &readfds)) {
-            char buffer[BUF_SIZE] = "";
-
-            /* ===== RECEBER DADOS DO SERVIDOR ===== */
-            /* recv(): ler até BUF_SIZE-1 bytes do socket
-             * Bloqueia apenas aqui após select() confirmar que há dados
-             * Retorno:
-             *   > 0 = bytes recebidos (dados válidos)
-             *   = 0 = ligação fechada graciosamente
-             *   < 0 = erro ou desconexão
-             */
-            int n = recv(server_fd, buffer, BUF_SIZE - 1, 0);
-
-            if (n <= 0) {
-                /* SERVIDOR DESCONECTOU */
-                printf(
-                    "\n\033[1;31m[DESCONECTADO]\033[0m Servidor encerrou "
-                    "ligação.\n");
-                autenticado = 0;
-                break;
-            }
-
-            /* Remover carácter newline (\n) do final se existir */
-            /* Nullificar o buffer (preparar para recebimento) */
-            buffer[n] = '\0';
-
-            /* ===== PROCESSAR RESPOSTA (PODE TER MÚLTIPLAS LINHAS) ===== */
-            /* Usar process_multiline_response() para lidar com tabelas e
-             * respostas multi-linha */
-            process_multiline_response(buffer);
-
-            if (buffer[0] == '[') {
-                printf(" > ");
-                fflush(stdout); /* Forçar escrita no ecrã imediatamente */
-            }
-        }
-
-        /* ===== VERIFICAR SE HÁ DADOS DO TECLADO (INPUT DO UTILIZADOR) ===== */
-        if (FD_ISSET(STDIN_FILENO, &readfds)) {
-            char input[BUF_SIZE] = "";
-
-            /* ===== LER LINHA COMPLETA DO TECLADO ===== */
-            /* fgets() em vez de scanf() porque:
-             * - scanf() lê apenas até espaço
-             * - fgets() lê linha inteira (com espaços)
-             * - Melhor controlo de buffer overflow
-             */
-            if (fgets(input, sizeof(input), stdin) == NULL) {
-                continue; /* Se erro, voltar a select() */
-            }
-
-            /* Remover newline do final */
-            input[strcspn(input, "\n")] = 0;
-
-            /* Se linha vazia, ignorar */
-            if (strlen(input) == 0) continue;
-
-            /* ===== PROCESSAR COMANDOS DO UTILIZADOR ===== */
-
-            /* F0 - LOGOUT / SAIR */
-            if (strcmp(input, "0") == 0 || strcmp(input, "EXIT") == 0) {
-                printf(" \033[1;36m[INFO]\033[0m Desconectando...\n");
-                send(server_fd, "LEAVE", 5,
-                     0);          /* Notificar servidor que cliente sai */
-                close(server_fd); /* Fechar socket (ligação TCP terminada) */
-                autenticado = 0;
-                break; /* Sair do while loop */
-            }
-
-            /* F1 - GET_INFO (informações do servidor) */
-            else if (strcmp(input, "1") == 0 ||
-                     strcmp(input, "GET_INFO") == 0) {
-                send(server_fd, "GET_INFO", 8, 0);
-                /* Servidor responde com info (versão, uptime, etc) */
-            }
-
-            /* F2 - ECHO (teste de conectividade — servidor responde com
-               messagem) */
-            else if (strncmp(input, "ECHO", 4) == 0) {
-                send(server_fd, input, strlen(input), 0);
-                /* Servidor responde: "ECHO: <mensagem>" */
-            }
-
-            /* F9 - JOIN #canal (Etapa 3 - entrar num canal específico) */
-            else if (strncmp(input, "JOIN ", 5) == 0) {
-                send(server_fd, input, strlen(input), 0);
-                /* Atualizar canal local do cliente */
-                strcpy(current_canal,
-                       strstr(input, "#") ? strstr(input, "#") : "#geral");
-                /* Servidor responde: "JOIN_OK: Entrou em #geral" */
-            }
-
-            /* F10 - BROADCAST (Etapa 3 - enviar mensagem a todo canal) */
-            else if (strncmp(input, "BROADCAST ", 10) == 0) {
-                send(server_fd, input, strlen(input), 0);
-                /* Servidor envia broadcast para todos no canal e responde
-                 * "BCAST_SENT" */
-            }
-
-            /* LEAVE - Sair do canal actual */
-            else if (strcmp(input, "LEAVE") == 0) {
-                send(server_fd, "LEAVE", 5, 0);
-                strcpy(current_canal, "");
-                /* Servidor responde: "LEAVE_OK" */
-            }
-
-            /* F11 - LIST_CHANNELS (Etapa 3 - listar canais activos) */
-            else if (strcmp(input, "LIST_CHANNELS") == 0) {
-                send(server_fd, "LIST_CHANNELS", 13, 0);
-                /* Servidor responde: "CHANNELS: #geral (2), #admin (1), ..." */
-            }
-
-            /* COMANDO GENÉRICO (enviar direto para servidor) */
-            else if (strlen(input) > 0) {
-                send(server_fd, input, strlen(input), 0);
-            }
-        }
-        /* Ciclo repete: volta a select() esperar por atividade */
-    } /* FIM DO WHILE AUTENTICADO */
-
+    /* Encerramento */
     close(server_fd);
-    printf(" \033[1;36m[INFO]\033[0m Até breve!\n");
+    printf("\n====================================================\n");
+    printf("       OBRIGADO POR USAR O C-CORD v3.0\n");
+    printf("====================================================\n");
+
     return 0;
 }

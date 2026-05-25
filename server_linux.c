@@ -749,8 +749,8 @@ void handle_list_channels(char* response) {
             }
             count++; /* Adicionar 1 para o primeiro utilizador */
 
-            snprintf(line, sizeof(line), "  %s (%d): %s\n", canais_unicos[i],
-                     count, usuarios_por_canal[i]);
+            snprintf(line, sizeof(line), "  %s (%d): %.500s\n",
+                     canais_unicos[i], count, usuarios_por_canal[i]);
             strncat(response, line, BUF_SIZE - strlen(response) - 1);
         }
         strcat(response, "Fim da lista de canais.");
