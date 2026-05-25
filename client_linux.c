@@ -46,36 +46,71 @@ int server_fd = -1;
 /* ============================================================================
  * FUNÇÃO: clear_buffer()
  * ============================================================================
- * Limpa buffer de stdin após scanf
+ * OBJETIVO: Limpar buffer de entrada padrão (stdin) após usar scanf()
+ * 
+ * EXPLICAÇÃO:
+ *   Quando o utilizador insere dados com scanf(), qualquer carácter extra
+ *   (como a tecla ENTER) fica no buffer. Esta função remove esses resíduos
+ *   lendo carácter a carácter até encontrar uma quebra de linha (\n) ou fim
+ *   de ficheiro (EOF). Isto evita que scanf() seguinte leia lixo.
+ *
+ * FUNCIONAMENTO:
+ *   1. Loop: lê carácter com getchar()
+ *   2. Se for '\n' (ENTER) ou EOF, sai do loop
+ *   3. Continua até limpar tudo
  */
 void clear_buffer() {
     int c;
+    /* Ler carácter a carácter até encontrar newline ou fim de ficheiro */
     while ((c = getchar()) != '\n' && c != EOF);
 }
 
 /* ============================================================================
  * FUNÇÃO: draw_header()
  * ============================================================================
- * Desenha interface TUI
+ * OBJETIVO: Desenhar a interface visual (TUI — Terminal User Interface)
+ * 
+ * PARÂMETROS:
+ *   - modo: Determina o esquema de cores baseado em permissões
+ *     0 = GUEST (não autenticado) — branco (\033[1;37m)
+ *     1 = USER (utilizador normal) — ciano (\033[1;36m)
+ *     2 = ADMIN (administrador) — vermelho (\033[1;31m)
+ *   - subtitulo: Texto descritivo a mostrar (ex: "LOGIN / AUTENTICAÇÃO")
+ *
+ * EXPLICAÇÃO:
+ *   Esta função limpa o ecrã e desenha um cabeçalho artístico com o logo
+ *   C-CORD. Mostra informações do utilizador (nome, canal, tempo de ligação).
+ *   Usa códigos ANSI para cores: \033[1;XmTEXTO\033[0m (X=cor, reposição em 0m)
+ *
+ * ESQUEMA DE CORES:
+ *   - 31m = Vermelho (ADMIN)
+ *   - 36m = Ciano (USER)
+ *   - 37m = Branco (GUEST)
+ *   - 33m = Amarelo (HIGHLIGHTING)
+ *   - 0m = Reposição para cor predefinida
  */
 void draw_header(int modo, const char* subtitulo) {
+    /* Limpar ecrã (comando UNIX) */
     system("clear");
     
+    /* ESCOLHER COR BASEADA NO MODO */
     if (modo == 2)
-        printf("\033[1;31m");
+        printf("\033[1;31m");        /* Vermelho para ADMIN */
     else if (modo == 1)
-        printf("\033[1;36m");
+        printf("\033[1;36m");        /* Ciano para USER */
     else
-        printf("\033[1;37m");
+        printf("\033[1;37m");        /* Branco para GUEST */
     
+    /* DESENHAR LOGO ASCII (C-CORD) */
     printf("  _____        _____              _ \n");
     printf(" / ____|      / ____|            | |\n");
     printf("| |     _____| |     ___  _ __ __| |\n");
     printf("| |    |_____| |    / _ \\| '__/ _` |\n");
     printf("| |____      | |___| (_) | | | (_| |\n");
     printf(" \\_____|      \\_____\\___/|_|  \\__,_|\n");
-    printf("\033[0m\n");
+    printf("\033[0m\n");  /* Reposição de cor */
     
+    /* LINHA SEPARADORA E INFORMAÇÃO DE MODO */
     printf("====================================================\n");
     if (modo == 2)
         printf("         \033[1;31m[!] MODO ADMINISTRADOR ATIVO\033[0m\n");
@@ -84,15 +119,18 @@ void draw_header(int modo, const char* subtitulo) {
     else
         printf("         \033[1;37m[?] BEM-VINDO AO C-CORD (v3.0)\033[0m\n");
     
+    /* MOSTRAR SUBTÍTULO SE FORNECIDO */
     if (subtitulo && strlen(subtitulo) > 0) {
         printf("====================================================\n");
         printf("    %s\n", subtitulo);
     }
     printf("====================================================\n");
     
+    /* MOSTRAR INFO DE UTILIZADOR SE AUTENTICADO (modo >= 1) */
     if (modo >= 1) {
         printf(" UTILIZADOR: [\033[1;33m%s\033[0m] | CANAL: %s\n",
                current_user, strlen(current_canal) > 0 ? current_canal : "(sem canal)");
+        /* Mostrar tempo de ligação em formato HH:MM:SS */
         if (login_time > 0) {
             int elapsed = (int)difftime(time(NULL), login_time);
             printf(" Ligado desde: %02dh:%02dm:%02ds\n", elapsed / 3600,
@@ -105,6 +143,12 @@ void draw_header(int modo, const char* subtitulo) {
 /* ============================================================================
  * FUNÇÃO: aguardar_enter()
  * ============================================================================
+ * OBJETIVO: Parar execução e esperar que utilizador pressione ENTER
+ *
+ * EXPLICAÇÃO:
+ *   Função simples para sincronização de apresentação.
+ *   Permite utilizador ver mensagens de sucesso/erro antes de continuar.
+ *   Lê um carácter (ENTER) e volta ao programa.
  */
 void aguardar_enter() {
     printf("\n >> Pressione ENTER para continuar...");
@@ -114,6 +158,15 @@ void aguardar_enter() {
 /* ============================================================================
  * FUNÇÃO: print_server_response()
  * ============================================================================
+ * OBJETIVO: Mostrar resposta do servidor de forma formatada
+ *
+ * PARÂMETROS:
+ *   res: String contendo a resposta do servidor
+ *
+ * EXPLICAÇÃO:
+ *   Função auxiliar para exibir respostas genéricas do servidor
+ *   em formato padronizado: [SERVIDOR] seguido da mensagem.
+ *   Usa cor verde para destaque.
  */
 void print_server_response(const char* res) {
     printf("\n\033[1;32m[SERVIDOR]\033[0m\n%s\n", res);
@@ -122,6 +175,15 @@ void print_server_response(const char* res) {
 /* ============================================================================
  * FUNÇÃO: sugerir_usernames()
  * ============================================================================
+ * OBJETIVO: Sugerir nomes de utilizadores alternativos
+ *
+ * PARÂMETROS:
+ *   base: Nome base para gerar sugestões
+ *
+ * EXPLICAÇÃO:
+ *   Se utilizador tenta criar conta com username já existente,
+ *   esta função gera sugestões alternativas adicionando sufixos.
+ *   Exemplos: "joao" → "joao_2026", "joao_pt", "joao_ccord"
  */
 void sugerir_usernames(const char* base) {
     printf("\n Sugestões disponíveis:\n");
@@ -133,31 +195,67 @@ void sugerir_usernames(const char* base) {
 /* ============================================================================
  * FUNÇÃO: handle_server_message()
  * ============================================================================
- * Processa mensagem recebida do servidor (resposta ou broadcast)
+ * OBJETIVO: Processar e formatar mensagem recebida do servidor
+ * 
+ * PARÂMETROS:
+ *   msg: String contendo a mensagem recebida via socket
+ *
+ * EXPLICAÇÃO:
+ *   Esta função verifica o tipo de mensagem recebida e formata a saída
+ *   com cores e símbolos apropriados:
+ *   
+ *   TIPO 1: Broadcasts (começam com '[')
+ *     Formato: "[#geral] utilizador: mensagem"
+ *     Cor: Amarelo (\033[1;33m) para destaque
+ *     Uso: Mensagens de chat em tempo real de outros utilizadores
+ *   
+ *   TIPO 2: Respostas de autenticação
+ *     AUTH_SUCCESS → OK em verde
+ *     AUTH_FAIL → ERRO em vermelho
+ *   
+ *   TIPO 3: Respostas de comandos
+ *     JOIN_OK, BCAST_SENT, LEAVE_OK → OK em verde
+ *     Qualquer coisa com FAIL/ERRO → ERRO em vermelho
+ *   
+ *   TIPO 4: Mensagens genéricas
+ *     Mostradas em ciano ([INFO])
+ *
+ * FLUXO DE DECISÃO:
+ *   if msg[0] == '[' → é broadcast (mensagem de chat) → amarelo
+ *   else if contém "AUTH_SUCCESS" → sucesso login → verde OK
+ *   else if contém "FAIL" ou "ERRO" → falha → vermelho ERRO
+ *   else → informação genérica → ciano INFO
  */
 void handle_server_message(const char* msg) {
+    /* Se mensagem vazia, não fazer nada */
     if (strlen(msg) == 0) return;
     
-    /* Broadcasts começam com [ (canal) */
+    /* ===== BROADCAST DE CHAT (de outro utilizador no canal) ===== */
+    /* Broadcasts formatados como "[#geral] username: mensagem" */
     if (msg[0] == '[') {
-        printf("\n\033[1;33m%s\033[0m\n", msg);
+        printf("\n\033[1;33m%s\033[0m\n", msg);  /* Amarelo para destaque */
     }
-    /* Respostas do servidor */
+    /* ===== RESPOSTA DE AUTENTICAÇÃO BEM-SUCEDIDA ===== */
     else if (strncmp(msg, "AUTH_SUCCESS", 12) == 0) {
         printf("\n\033[1;32m[OK]\033[0m Autenticação bem-sucedida!\n");
     }
+    /* ===== RESPOSTA DE JOIN (entrar em canal) ===== */
     else if (strncmp(msg, "JOIN_OK", 7) == 0) {
         printf("\n\033[1;32m[OK]\033[0m %s\n", msg);
     }
+    /* ===== RESPOSTA DE BROADCAST ENVIADO ===== */
     else if (strncmp(msg, "BCAST_SENT", 10) == 0) {
         printf("\n\033[1;32m[OK]\033[0m Mensagem enviada!\n");
     }
+    /* ===== RESPOSTA DE LEAVE (sair de canal) ===== */
     else if (strncmp(msg, "LEAVE_OK", 8) == 0) {
         printf("\n\033[1;32m[OK]\033[0m Saiu do canal\n");
     }
+    /* ===== ERROS (qualquer mensagem contendo FAIL ou ERRO) ===== */
     else if (strstr(msg, "FAIL") || strstr(msg, "ERRO")) {
         printf("\n\033[1;31m[ERRO]\033[0m %s\n", msg);
     }
+    /* ===== INFORMAÇÃO GENÉRICA ===== */
     else {
         printf("\n\033[1;36m[INFO]\033[0m %s\n", msg);
     }
@@ -166,55 +264,104 @@ void handle_server_message(const char* msg) {
 /* ============================================================================
  * FUNÇÃO: fluxo_login()
  * ============================================================================
- * Autentica utilizador (antes de entrar no select loop)
+ * OBJETIVO: Autenticar o utilizador no servidor antes de entrar em chat
+ * 
+ * PARÂMETROS:
+ *   server_fd: File descriptor do socket TCP já conectado ao servidor
+ *
+ * RETORNO:
+ *   1 se login bem-sucedido
+ *   0 se login falhou, conta pendente ou inactiva
+ *
+ * EXPLICAÇÃO DO PROTOCOLO DE AUTENTICAÇÃO (REDE):
+ *   
+ *   CLIENTE                        SERVIDOR
+ *   ────────────────────────────────────────
+ *   1. Pedir credentials        →
+ *                               ← 2. Processar (verifica ficheiro users.txt)
+ *   3. Receber resposta         ←   
+ *   
+ *   POSSÍVEIS RESPOSTAS:
+ *   - "AUTH_SUCCESS:USER" → Login OK como utilizador normal
+ *   - "AUTH_SUCCESS:ADMIN" → Login OK como administrador
+ *   - "AUTH_FAIL" → Credenciais incorrectas
+ *   - "AUTH_PENDING" → Conta à espera de aprovação do admin
+ *   - "AUTH_INACTIVE" → Conta suspensa
+ *   
+ *   FLUXO APÓS SUCESSO:
+ *   1. Guardar username em current_user
+ *   2. Definir is_admin baseado na resposta
+ *   3. Registar tempo de login (login_time)
+ *   4. AUTO-JOIN #geral (channel predefinido)
+ *   5. Retornar 1 para entrar no loop principal
  */
 int fluxo_login(int server_fd) {
     while (1) {
         draw_header(0, "LOGIN / AUTENTICAÇÃO");
         char u[50], p[50], cmd[150], res[BUF_SIZE];
         
+        /* OBTER CREDENCIAIS DO UTILIZADOR */
         printf(" Nome de Utilizador: ");
         scanf("%49s", u);
         printf(" Palavra-passe: ");
         scanf("%49s", p);
-        clear_buffer();
+        clear_buffer();  /* Limpar buffer após scanf */
         
         printf("\n [A VERIFICAR CREDENCIAIS...]\n");
         
+        /* ===== ENVIAR COMANDO AUTH PARA SERVIDOR (VIA REDE) ===== */
+        /* Formato: "AUTH username password" */
         sprintf(cmd, "AUTH %s %s", u, p);
         send(server_fd, cmd, strlen(cmd), 0);
+        /* send(): Enviar buffer para socket
+         * Parâmetros: (socket_fd, dados, tamanho, flags)
+         * Retorno: bytes enviados ou -1 se erro
+         */
         
-        memset(res, 0, BUF_SIZE);
+        /* ===== RECEBER RESPOSTA DO SERVIDOR (VIA REDE) ===== */
+        memset(res, 0, BUF_SIZE);  /* Limpar buffer de resposta */
         recv(server_fd, res, BUF_SIZE - 1, 0);
+        /* recv(): Receber dados do socket até BUF_SIZE-1 bytes
+         * Armazena na variável res
+         * Retorno: bytes recebidos, 0=desconexão, -1=erro
+         */
+        
+        /* ===== PROCESSAR RESPOSTA ===== */
         
         if (strncmp(res, "AUTH_SUCCESS", 12) == 0) {
+            /* ✓ LOGIN BEM-SUCEDIDO */
             strcpy(current_user, u);
+            /* Verificar se é ADMIN ou USER */
             is_admin = (strstr(res, "ADMIN") != NULL);
             autenticado = 1;
-            login_time = time(NULL);
+            login_time = time(NULL);  /* Registar hora de login */
             strcpy(current_canal, "#geral");
             printf(" \033[1;32m[OK]\033[0m Bem-vindo, %s!\n", u);
             
-            /* AUTO-JOIN #geral */
+            /* ===== AUTO-JOIN #geral (CHANNEL PREDEFINIDO) ===== */
+            /* Após autenticação, cliente junta-se automaticamente ao canal #geral */
             sprintf(cmd, "JOIN #geral");
             send(server_fd, cmd, strlen(cmd), 0);
             memset(res, 0, BUF_SIZE);
             recv(server_fd, res, BUF_SIZE - 1, 0);
             
             aguardar_enter();
-            return 1;
+            return 1;  /* SUCESSO */
         }
         else if (strcmp(res, "AUTH_PENDING") == 0) {
+            /* ✗ CONTA À ESPERA DE APROVAÇÃO */
             printf(" \033[1;33m[!] Conta aguarda aprovação admin.\033[0m\n");
             aguardar_enter();
             return 0;
         }
         else if (strcmp(res, "AUTH_INACTIVE") == 0) {
+            /* ✗ CONTA FOI SUSPENSA */
             printf(" \033[1;31m[!] Conta foi suspensa.\033[0m\n");
             aguardar_enter();
             return 0;
         }
         else {
+            /* ✗ FALHA GENÉRICA (credenciais incorrectas) */
             printf(" \033[1;31m[!] FALHA NO LOGIN\033[0m\n");
             aguardar_enter();
             return 0;
@@ -225,12 +372,34 @@ int fluxo_login(int server_fd) {
 /* ============================================================================
  * FUNÇÃO: fluxo_registo()
  * ============================================================================
+ * OBJETIVO: Permitir criação de nova conta de utilizador
+ *
+ * PARÂMETROS:
+ *   server_fd: File descriptor do socket TCP
+ *
+ * RETORNO:
+ *   1 se registo bem-sucedido
+ *   0 se registo falhou (username já existe, email inválido, etc)
+ *
+ * EXPLICAÇÃO DO PROTOCOLO (REDE):
+ *   1. Pedir ao utilizador: username, password (confirmada), email
+ *   2. Validar que as passwords coincidem (localmente)
+ *   3. Enviar comando "REGISTER username password" ao servidor
+ *   4. Receber resposta:
+ *      - "REGISTER_OK" → Conta criada com sucesso
+ *      - "REGISTER_FAIL" → Username/email já existente
+ *   5. Retornar resultado
+ *
+ * SEGURANÇA:
+ *   ⚠ Nota: Passwords enviadas em plain text (sem cifra)
+ *   Para produção: implementar TLS/SSL para encripção
  */
 int fluxo_registo(int server_fd) {
     while (1) {
         draw_header(0, "CRIAR NOVA CONTA");
         char u[50], p[50], p2[50], email[100], cmd[200], res[BUF_SIZE];
         
+        /* ===== OBTER DADOS DE REGISTO ===== */
         printf(" Nome de Utilizador: ");
         scanf("%49s", u);
         printf(" Palavra-passe: ");
@@ -239,26 +408,32 @@ int fluxo_registo(int server_fd) {
         scanf("%49s", p2);
         printf(" E-mail: ");
         scanf("%99s", email);
-        clear_buffer();
+        clear_buffer();  /* Limpar newline após scanf */
         
+        /* ===== VALIDAR PASSWORDS (LOCALMENTE) ===== */
         if (strcmp(p, p2) != 0) {
             printf(" \033[1;31m[ERRO]\033[0m Palavras-passe não coincidem.\n");
             aguardar_enter();
-            continue;
+            continue;  /* Repetir loop */
         }
         
+        /* ===== ENVIAR COMANDO REGISTER AO SERVIDOR ===== */
         sprintf(cmd, "REGISTER %s %s", u, p);
         send(server_fd, cmd, strlen(cmd), 0);
         
+        /* ===== RECEBER RESPOSTA DO SERVIDOR ===== */
         memset(res, 0, BUF_SIZE);
         recv(server_fd, res, BUF_SIZE - 1, 0);
         
+        /* ===== PROCESSAR RESULTADO ===== */
         if (strncmp(res, "REGISTER_OK", 11) == 0) {
+            /* ✓ REGISTO BEM-SUCEDIDO */
             printf(" \033[1;32m[OK]\033[0m Registo bem-sucedido!\n");
             aguardar_enter();
             return 1;
         }
         else {
+            /* ✗ REGISTO FALHOU */
             printf(" \033[1;31m[ERRO]\033[0m %s\n", res);
             aguardar_enter();
             return 0;
@@ -269,7 +444,27 @@ int fluxo_registo(int server_fd) {
 /* ============================================================================
  * FUNÇÃO: menu_pre_login()
  * ============================================================================
- * Menu antes de autenticar
+ * OBJETIVO: Mostrar menu inicial (antes de autenticação)
+ *
+ * PARÂMETROS:
+ *   server_fd: File descriptor do socket TCP
+ *
+ * EXPLICAÇÃO:
+ *   Loop que mostra menu com 3 opções:
+ *   - F3: Tentar fazer login com conta existente
+ *   - F6: Criar nova conta (registar)
+ *   - F0: Sair do programa
+ *   
+ *   Loop continua até utilizador autenticar com sucesso (autenticado = 1)
+ *   ou escolha "Sair" (que termina programa).
+ *
+ * SEQUÊNCIA:
+ *   1. Mostrar menu (draw_header com modo=0 GUEST)
+ *   2. Pedir escolha numerada (3, 6 ou 0)
+ *   3. Se 3 → chamar fluxo_login()
+ *   4. Se 6 → chamar fluxo_registo()
+ *   5. Se 0 → fechar socket e sair
+ *   6. Se sucesso em login, quebrar loop (autenticado=1)
  */
 void menu_pre_login(int server_fd) {
     while (!autenticado) {
@@ -279,16 +474,20 @@ void menu_pre_login(int server_fd) {
         printf(" [ F0 ] Sair\n\n Escolha: ");
         
         int opt;
-        if (scanf("%d", &opt) != 1) opt = 0;
+        if (scanf("%d", &opt) != 1) opt = 0;  /* Se entrada inválida, tratar como 0 */
         clear_buffer();
         
         if (opt == 3) {
-            if (fluxo_login(server_fd)) break;
+            /* Login: função retorna 1 se sucesso, 0 se falha */
+            if (fluxo_login(server_fd)) break;  /* Sair do while se login OK */
         }
         else if (opt == 6) {
+            /* Registo: criar nova conta */
             fluxo_registo(server_fd);
+            /* Após registo, volta ao menu (conta criada mas não autenticada) */
         }
         else if (opt == 0) {
+            /* Sair: fechar socket e encerrar programa */
             printf("\n \033[1;36m[INFO]\033[0m Até breve!\n");
             close(server_fd);
             exit(0);
@@ -299,64 +498,158 @@ void menu_pre_login(int server_fd) {
 /* ============================================================================
  * FUNÇÃO PRINCIPAL: main()
  * ============================================================================
+ * OBJETIVO: Executar cliente C-Cord com suporte a autenticação e chat
+ *
+ * PARÂMETROS:
+ *   argc: Número de argumentos (argv[0]=programa, argv[1]=IP, argv[2]=PORTO)
+ *   argv: Array de strings com os argumentos
+ *
+ * RETORNO:
+ *   0 se sucesso
+ *   1 se erro (argumentos inválidos, conexão falha, etc)
+ *
+ * FLUXO PRINCIPAL:
+ *   1. Validar argumentos (IP e porto)
+ *   2. Criar socket TCP
+ *   3. Conectar ao servidor
+ *   4. Autenticar utilizador (LOGIN / REGISTO)
+ *   5. Entrar em loop com select() para chat
+ *   6. Fechar socket ao sair
+ *
+ * PROTOCOLO DE LIGAÇÃO TCP:
+ *   
+ *   CLIENTE                                 SERVIDOR
+ *   ───────────────────────────────────────────────
+ *   1. socket(AF_INET, SOCK_STREAM, 0)
+ *      Criar socket TCP (AF_INET=IPv4, SOCK_STREAM=TCP)
+ *                                     ←→ bind(10000) + listen()
+ *   
+ *   2. connect(addr, port)
+ *      Tentar conectar                ←→ accept() espera ligação
+ *   
+ *   3. [Ligação TCP estabelecida]
+ *      Bidirectional: send() / recv()
+ *                                     ←→ Bidirectional: recv() / send()
+ *   
+ *   4. close() ou desconexão         ←→ Fechar descritor cliente
+ *
+ * CAMADAS DE ABSTRAÇÃO TCP:
+ *   - AF_INET: Protocolo IPv4 (alternativa: AF_INET6 para IPv6)
+ *   - SOCK_STREAM: TCP (alternativa: SOCK_DGRAM para UDP)
+ *   - struct sockaddr_in: Endereço IP versão 4 (porta + IP)
+ *   - htons(): Host To Network Short (converter endianness de porta)
+ *   - inet_aton(): Converter string IP para formato binário
  */
 int main(int argc, char *argv[]) {
+    /* ===== VALIDAR ARGUMENTOS ===== */
     if (argc != 3) {
         printf("Uso: %s <IP_SERVIDOR> <PORTO>\n", argv[0]);
+        printf("Exemplo: %s 127.0.0.1 10000\n", argv[0]);
         exit(1);
     }
     
     const char *server_ip = argv[1];
-    int server_port = atoi(argv[2]);
+    int server_port = atoi(argv[2]);  /* atoi: Converter string para int */
     
-    /* CONECTAR AO SERVIDOR */
+    /* ===== CRIAR SOCKET TCP ===== */
+    /* socket(familia, tipo, protocolo)
+     * - AF_INET: Usar protocolo IPv4 (Internet Protocol versão 4)
+     * - SOCK_STREAM: Usar TCP (Transmission Control Protocol) — confiável, ordenado
+     * - 0: Usar protocolo padrão para esta combinação
+     * Retorno: file descriptor (inteiro >= 0 se OK, -1 se erro)
+     */
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0) {
-        perror("socket");
+        perror("socket");  /* Mostrar erro do sistema */
         exit(1);
     }
     
+    /* ===== PREPARAR ENDEREÇO DO SERVIDOR ===== */
+    /* struct sockaddr_in contém:
+     * - sin_family: AF_INET (IPv4)
+     * - sin_port: Porto (formato big-endian, daí htons())
+     * - sin_addr: Endereço IP (formato binário de 32 bits)
+     */
     struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(server_port);
+    memset(&addr, 0, sizeof(addr));  /* Limpar struct (todos zeros) */
+    addr.sin_family = AF_INET;       /* Família: IPv4 */
+    addr.sin_port = htons(server_port);  /* Porto (converter little-endian → big-endian) */
     
+    /* Converter IP string para formato binário */
     if (inet_aton(server_ip, &addr.sin_addr) <= 0) {
         printf("Endereço IP inválido\n");
         close(server_fd);
         exit(1);
     }
     
+    /* ===== CONECTAR AO SERVIDOR (ESTABELECER LIGAÇÃO TCP) ===== */
     printf(" A verificar servidor no porto %d...\n", server_port);
+    
+    /* connect(socket, endereço, tamanho_endereço)
+     * Tenta estabelecer ligação TCP com servidor
+     * Bloqueia até: OK (retorna 0), FALHA (retorna -1), TIMEOUT
+     */
     if (connect(server_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
         printf(" \033[1;31m[ERRO]\033[0m Servidor inacessível.\n");
         close(server_fd);
         exit(1);
     }
     printf(" \033[1;32m[OK]\033[0m Servidor encontrado.\n");
-    sleep(1);
+    sleep(1);  /* Dar tempo para feedback visual */
     
-    /* MENU DE LOGIN */
+    /* ===== MENU DE LOGIN ===== */
+    /* Loop: Cliente pode tentar login múltiplas vezes (ou registar conta nova) */
     menu_pre_login(server_fd);
     
-    /* ========== LOOP PRINCIPAL COM SELECT ========== */
+    /* ========== LOOP PRINCIPAL COM SELECT ========== 
+     * 
+     * OBJETIVO: Monitorizar simultaneamente TECLADO e REDE
+     * 
+     * PROBLEMA RESOLVIDO (Etapa 3):
+     *   Na Etapa 2, se cliente fazia scanf() bloqueado no teclado,
+     *   não conseguia receber broadcasts do servidor.
+     *   Solução: usar select() para "dupla escuta" (dual listening)
+     *   
+     * ARQUITECTURA SELECT():
+     *   1. Criar fd_set (conjunto de file descriptors)
+     *   2. FD_ZERO(&readfds) - limpar conjunto
+     *   3. FD_SET(STDIN_FILENO, &readfds) - adicionar teclado (fd=0)
+     *   4. FD_SET(server_fd, &readfds) - adicionar socket (fd=n)
+     *   5. select() - esperar até haver dados NUMA DAS DUAS FONTES
+     *   6. FD_ISSET() - verificar qual tem dados
+     *   7. recv() ou fgets() - ler dados apenas da fonte pronta
+     *   
+     * TIMEOUT (1 segundo):
+     *   Se nada acontecer em 1 seg, select() retorna 0 (timeout)
+     *   Isto permite aplicação continuar responsiva mesmo sem input
+     */
     draw_header(1, "CHAT — Etapa 3 com Canais");
     printf("\n [Escute broadcasts em tempo real]\n");
     printf(" Escreva comandos ou mensagens abaixo:\n\n");
     
     while (autenticado) {
-        fd_set readfds;
-        struct timeval tv;
+        /* ===== PREPARAR FD_SET PARA SELECT ===== */
+        fd_set readfds;           /* Conjunto de file descriptors a monitorizar */
+        struct timeval tv;        /* Timeout para select() */
         
-        FD_ZERO(&readfds);
-        FD_SET(STDIN_FILENO, &readfds);
-        FD_SET(server_fd, &readfds);
+        FD_ZERO(&readfds);        /* Limpar o conjunto (nenhum fd selecionado) */
+        FD_SET(STDIN_FILENO, &readfds);  /* Adicionar teclado (file descriptor 0) */
+        FD_SET(server_fd, &readfds);     /* Adicionar socket (file descriptor do servidor) */
         
+        /* Calcular max_fd + 1 (necessário para select()) */
         int max_fd = (server_fd > STDIN_FILENO) ? server_fd : STDIN_FILENO;
         
-        tv.tv_sec = 1;
-        tv.tv_usec = 0;
+        /* Definir timeout de 1 segundo */
+        tv.tv_sec = 1;            /* Segundos */
+        tv.tv_usec = 0;           /* Microsegundos */
         
+        /* ===== CHAMAR SELECT() - ESPERAR POR ATIVIDADE ===== */
+        /* select(max_fd+1, leitura, escrita, exceção, timeout)
+         * Retorno:
+         *   > 0 = número de fds com atividade
+         *   = 0 = timeout (1 seg passou, nada aconteceu)
+         *   < 0 = erro
+         */
         int activity = select(max_fd + 1, &readfds, NULL, NULL, &tv);
         
         if (activity < 0) {
@@ -364,58 +657,79 @@ int main(int argc, char *argv[]) {
             break;
         }
         
-        /* DADOS DO SERVIDOR (broadcast ou resposta) */
+        /* ===== VERIFICAR SE HÁ DADOS DO SERVIDOR (REDE) ===== */
+        /* FD_ISSET() retorna verdadeiro se este fd tem dados prontos */
         if (FD_ISSET(server_fd, &readfds)) {
             char buffer[BUF_SIZE] = "";
+            
+            /* ===== RECEBER DADOS DO SERVIDOR ===== */
+            /* recv(): ler até BUF_SIZE-1 bytes do socket
+             * Bloqueia apenas aqui após select() confirmar que há dados
+             * Retorno:
+             *   > 0 = bytes recebidos (dados válidos)
+             *   = 0 = ligação fechada graciosamente
+             *   < 0 = erro ou desconexão
+             */
             int n = recv(server_fd, buffer, BUF_SIZE - 1, 0);
             
             if (n <= 0) {
+                /* SERVIDOR DESCONECTOU */
                 printf("\n\033[1;31m[DESCONECTADO]\033[0m Servidor encerrou ligação.\n");
                 autenticado = 0;
                 break;
             }
             
-            /* Remover \n */
+            /* Remover carácter newline (\n) do final se existir */
             buffer[strcspn(buffer, "\n")] = 0;
             
+            /* ===== PROCESSAR MENSAGEM ===== */
             handle_server_message(buffer);
             
-            /* Reexibir prompt se necessário */
+            /* Se foi broadcast ([...]), reexibir prompt para utilizador continuar */
             if (buffer[0] == '[') {
                 printf(" > ");
-                fflush(stdout);
+                fflush(stdout);  /* Forçar escrita no ecrã imediatamente */
             }
         }
         
-        /* DADOS DO TECLADO (input do utilizador) */
+        /* ===== VERIFICAR SE HÁ DADOS DO TECLADO (INPUT DO UTILIZADOR) ===== */
         if (FD_ISSET(STDIN_FILENO, &readfds)) {
             char input[BUF_SIZE] = "";
             
+            /* ===== LER LINHA COMPLETA DO TECLADO ===== */
+            /* fgets() em vez de scanf() porque:
+             * - scanf() lê apenas até espaço
+             * - fgets() lê linha inteira (com espaços)
+             * - Melhor controlo de buffer overflow
+             */
             if (fgets(input, sizeof(input), stdin) == NULL) {
-                continue;
+                continue;  /* Se erro, voltar a select() */
             }
             
+            /* Remover newline do final */
             input[strcspn(input, "\n")] = 0;
             
+            /* Se linha vazia, ignorar */
             if (strlen(input) == 0) continue;
             
-            /* PROCESSAR COMANDOS */
+            /* ===== PROCESSAR COMANDOS DO UTILIZADOR ===== */
             
-            /* Logout */
+            /* F0 - LOGOUT / SAIR */
             if (strcmp(input, "0") == 0 || strcmp(input, "EXIT") == 0) {
                 printf(" \033[1;36m[INFO]\033[0m Desconectando...\n");
-                send(server_fd, "LEAVE", 5, 0);
-                close(server_fd);
+                send(server_fd, "LEAVE", 5, 0);  /* Notificar servidor que cliente sai */
+                close(server_fd);  /* Fechar socket (ligação TCP terminada) */
                 autenticado = 0;
-                break;
+                break;  /* Sair do while loop */
             }
             
-            /* GET_INFO */
+            /* F1 - GET_INFO (informações do servidor) */
             else if (strcmp(input, "1") == 0 || strcmp(input, "GET_INFO") == 0) {
                 send(server_fd, "GET_INFO", 8, 0);
+                /* Servidor responde com info (versão, uptime, etc) */
             }
             
-            /* ECHO */
+            /* F2 - ECHO (teste de conectividade — servidor responde com messagem) */
             else if (strncmp(input, "2", 1) == 0 || strncmp(input, "ECHO ", 5) == 0) {
                 char msg[300];
                 if (input[0] == '2') {
@@ -425,9 +739,10 @@ int main(int argc, char *argv[]) {
                     snprintf(input, sizeof(input) - 1, "ECHO %s", msg);
                 }
                 send(server_fd, input, strlen(input), 0);
+                /* Servidor responde: "ECHO: <mensagem>" */
             }
             
-            /* JOIN #canal */
+            /* F9 - JOIN #canal (Etapa 3 - entrar num canal específico) */
             else if (strncmp(input, "9", 1) == 0 || strncmp(input, "JOIN ", 5) == 0) {
                 char cmd[100];
                 if (input[0] == '9') {
@@ -440,10 +755,12 @@ int main(int argc, char *argv[]) {
                     strcpy(cmd, input);
                 }
                 send(server_fd, cmd, strlen(cmd), 0);
+                /* Atualizar canal local do cliente */
                 strcpy(current_canal, strstr(cmd, "#") ? strstr(cmd, "#") : "#geral");
+                /* Servidor responde: "JOIN_OK: Entrou em #geral" */
             }
             
-            /* BROADCAST */
+            /* F10 - BROADCAST (Etapa 3 - enviar mensagem a todo canal) */
             else if (strncmp(input, "10", 2) == 0 || strncmp(input, "BROADCAST ", 10) == 0) {
                 char cmd[BUF_SIZE];
                 if (strncmp(input, "10", 2) == 0) {
@@ -456,20 +773,23 @@ int main(int argc, char *argv[]) {
                     strcpy(cmd, input);
                 }
                 send(server_fd, cmd, strlen(cmd), 0);
+                /* Servidor envia broadcast para todos no canal e responde "BCAST_SENT" */
             }
             
-            /* LEAVE */
+            /* LEAVE - Sair do canal actual */
             else if (strcmp(input, "LEAVE") == 0) {
                 send(server_fd, "LEAVE", 5, 0);
                 strcpy(current_canal, "");
+                /* Servidor responde: "LEAVE_OK" */
             }
             
-            /* Outros comandos (enviar direto para servidor) */
+            /* COMANDO GENÉRICO (enviar direto para servidor) */
             else if (strlen(input) > 0) {
                 send(server_fd, input, strlen(input), 0);
             }
         }
-    }
+        /* Ciclo repete: volta a select() esperar por atividade */
+    }  /* FIM DO WHILE AUTENTICADO */
     
     close(server_fd);
     printf(" \033[1;36m[INFO]\033[0m Até breve!\n");
