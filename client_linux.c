@@ -341,8 +341,42 @@ int fluxo_login(void) {
 }
 
 /* ============================================================================
- * FLUXO DE REGISTO
- * Conforme mockup: username + password + confirmação.
+ * FUNÇÃO: fluxo_registo()
+ * Implementa o fluxo de criação de nova conta no sistema.
+ *
+ * FLUXO PASSO-A-PASSO:
+ *   1. Draw header GUEST com subtítulo "CRIAR NOVA CONTA"
+ *   2. Pedir 3 inputs:
+ *      - Nome de utilizador (máx 49 caracteres)
+ *      - Palavra-passe (máx 49 caracteres)
+ *      - Confirmação de palavra-passe (validação local)
+ *   3. Validar se as 2 passwords coincidem:
+ *      - Se diferentes → mostrar erro + aguardar_enter() + return 0
+ *      - Se iguais → prosseguir
+ *   4. Construir comando: "REGISTER username password"
+ *   5. Enviar ao servidor via enviar_e_receber()
+ *   6. Analisar resposta:
+ *      - REGISTER_OK
+ *        → Conta criada com sucesso (estado inicial: PENDING)
+ *        → Mostrar "Aguarde aprovação do administrador"
+ *        → Return 1 (sucesso, volta a menu_pre_login)
+ *      - REGISTER_FAIL (username já existe)
+ *        → Mostrar sugestões (username_2026, username_pt, etc)
+ *        → Opção de retry fluxo_registo() recursivo
+ *        → Return 0 se cancelar
+ *
+ * VALIDAÇÃO:
+ *   • scanf() verificação (se retorna != 1, input foi inválido)
+ *   • clear_buffer() após scanf() para limpar '\n'
+ *   • snprintf() para evitar buffer overflow (%.50s limit)
+ *   • strcmp() para comparação exata de strings
+ *
+ * RETORNO:
+ *   1 — Registo bem-sucedido
+ *   0 — Cancelado ou falhou
+ *
+ * ESTADO ALTERADO:
+ *   Nenhum (apenas side-effect: registo enviado ao servidor)
  * ============================================================================
  */
 int fluxo_registo(void) {
@@ -409,7 +443,33 @@ int fluxo_registo(void) {
 }
 
 /* ============================================================================
- * MENU PRÉ-LOGIN (GUEST)
+ * FUNÇÃO: menu_pre_login()
+ * Menu principal para utilizadores não autenticados (estado GUEST).
+ *
+ * FLUXO:
+ *   Loop while (!autenticado):
+ *   1. Desenha header com modo GUEST (branco)
+ *   2. Mostra 3 opções:
+ *      [ 1 ] Iniciar Sessão → chama fluxo_login()
+ *      [ 2 ] Registar Utilizador → chama fluxo_registo()
+ *      [ 0 ] Terminar Ligação → close(server_fd) + exit(0)
+ *   3. Captura input com scanf("%d", &opt)
+ *   4. Switch/case para processar escolha
+ *   5. Repete até fluxo_login() retornar 1 (sucesso) → autenticado=1 → sai loop
+ *
+ * PROCESSAMENTO DE INPUT:
+ *   • if (scanf("%d", &opt) != 1) opt = -1
+ *     → Se scanf falha, opt fica -1 (entrada inválida)
+ *   • clear_buffer() após scanf()
+ *     → Remove '\n' deixado em stdin
+ *   • switch/case com default "Opção inválida"
+ *
+ * SAÍDA DO LOOP:
+ *   Quando fluxo_login() retorna 1:
+ *   → is_admin_flag e autenticado setados
+ *   → Menu USER (menu_user) ou ADMIN (menu_admin) chamados em main()
+ *
+ * NOTA: Este é o primeiro menu que o utilizador vê na aplicação.
  * ============================================================================
  */
 void menu_pre_login(void) {
@@ -450,8 +510,43 @@ void menu_pre_login(void) {
 }
 
 /* ============================================================================
- * SUBMENU PERFIL (USER)
- * Conforme mockup: dados da conta, alterar e-mail, alterar password.
+ * FUNÇÃO: submenu_perfil()
+ * Submenu para gestão de dados pessoais do utilizador.
+ *
+ * FUNCIONALIDADE:
+ *   Permite ao utilizador ver e editar informações da sua conta:
+ *   • Dados atuais: Nome, Função, Estado, Duração sessão
+ *   • Opções:
+ *     [1] Alterar E-mail (envia ECHO alteracao_email_user_email)
+ *     [2] Alterar Palavra-passe (validação local, sem envio real)
+ *     [0] Voltar ao Menu Principal
+ *
+ * CÁLCULO DE DURAÇÃO SESSÃO:
+ *   int elapsed = (login_time > 0) ? (int)difftime(time(NULL), login_time) : 0
+ *   • difftime(agora, login_time) retorna segundos decorridos
+ *   • Converte para: HH:MM:SS usando divisão inteira
+ *     - Horas: elapsed / 3600
+ *     - Minutos: (elapsed % 3600) / 60
+ *     - Segundos: elapsed % 60
+ *   • Formato: "%02dh:%02dm:%02ds" (2 dígitos, zero-padded)
+ *
+ * COMUNICAÇÃO COM SERVIDOR:
+ *   Alterar E-mail:
+ *   • Pede input: "Novo E-mail"
+ *   • Envia: "ECHO alteracao_email_<user>_<email>"
+ *   • Resposta: Simplesmente confirma no ecrã
+ *
+ *   Alterar Palavra-passe:
+ *   • Pede 3 inputs: Password atual, Nova, Confirmação
+ *   • Valida localmente: if (strcmp(p_nova, p_conf) != 0) → erro
+ *   • Sem envio ao servidor (apenas feedback visual)
+ *
+ * LOOP:
+ *   while (!sair):
+ *   → Se opt==0, sair=1, sai do submenu
+ *   → Senão, repete o submenu
+ *
+ * RETORNO: Nenhum (void)
  * ============================================================================
  */
 void submenu_perfil(void) {
@@ -633,9 +728,44 @@ void submenu_contactos(void) {
 }
 
 /* ============================================================================
- * SUBMENU MENSAGENS PRIVADAS (USER/ADMIN)
- * Conforme mockup: lista de conversas com destaque para não lidas,
- * display de conversa lado a lado, envio offline.
+ * FUNÇÃO: submenu_mensagens()
+ * Submenu para gestão de mensagens privadas entre utilizadores.
+ *
+ * FUNCIONALIDADE:
+ *   1. Mostra caixa de entrada com contagem de novas mensagens
+ *   2. Permite enviar mensagens privadas offline (armazenadas no servidor)
+ *   3. Refresh para atualizar lista
+ *
+ * VERIFICAÇÃO DE NOVAS MENSAGENS:
+ *   int novas = 0;
+ *   char* p = res;
+ *   while ((p = strstr(p, "De:")) != NULL) {
+ *       novas++;
+ *       p++;
+ *   }
+ *   • strstr(res, "De:") procura padrão "De:" na resposta
+ *   • Cada ocorrência = uma mensagem recebida
+ *   • p++ avança o pointer para encontrar próximas (evita loop infinito)
+ *   • Resultado: contador de mensagens não lidas
+ *
+ * FLUXO DE ENVIO:
+ *   Opção [1] - Enviar mensagem:
+ *   • Draw header com modo apropriado (USER ou ADMIN)
+ *   • Input: Nome do Destinatário
+ *   • Input: Conteúdo da mensagem (fgets para multi-linhas)
+ *   • msg[strcspn(msg, "\n")] = '\0'
+ *     → strcspn procura primeira posição de '\n'
+ *     → Replace com '\0' (remove newline de fgets)
+ *   • Envia: "SEND_MSG <dest> <sender> <msg>"
+ *   • Análise resposta: if (strstr(res, "MSG_SENT")) → sucesso
+ *
+ * MODO ADAPTATIVO:
+ *   int modo = is_admin_flag ? 2 : 1
+ *   • Se is_admin_flag=1 → modo=2 (ADMIN, cores vermelhas)
+ *   • Se is_admin_flag=0 → modo=1 (USER, cores ciano)
+ *   • Usado em draw_header() para cores apropriadas
+ *
+ * RETORNO: Nenhum (void)
  * ============================================================================
  */
 void submenu_mensagens(void) {
@@ -720,8 +850,73 @@ void submenu_mensagens(void) {
 }
 
 /* ============================================================================
- * SUBMENU CANAIS — CHAT EM TEMPO REAL (F9/F10)
- * Conforme mockup: lista de canais, entrar, chat com /quit para sair.
+ * FUNÇÃO: submenu_canais()
+ * Submenu para chat em tempo real em canais (broadcast).
+ *
+ * ESTE É O SUBMENU MAIS COMPLEXO E IMPORTANTE:
+ * • Usa select() para escuta dupla (stdin + servidor)
+ * • Permite chat multi-utilizador em tempo real
+ * • Implementa ligação persistente (Etapa 3 key feature)
+ *
+ * FLUXO PARTE 1: SELEÇÃO DE CANAL
+ *   1. Draw header com modo apropriado
+ *   2. Listar canais pré-definidos:
+ *      [1] #geral   - Conversa livre
+ *      [2] #linux   - Técnico
+ *      [3] #ajuda   - Admin
+ *      [4] Personalizado (input do utilizador)
+ *   3. Mostrar canal_atual: \033[1;33m...\033[0m (amarelo)
+ *   4. Input: número do canal
+ *   5. Switch/case para determinar nome_canal
+ *      • Casos 1-3: strcpy() para nomes pré-definidos
+ *      • Caso 4: scanf() para nome personalizado
+ *        → if (nome_canal[0] != '#') adiciona # prefix
+ *        → snprintf(tmp, sizeof(tmp), "#%.48s", nome_canal)
+ *           Garante "#" + até 48 caracteres = 49 máx
+ *   6. Enviar: "JOIN #canal" ao servidor
+ *   7. Se "JOIN_OK", prosseguir; senão retry
+ *
+ * FLUXO PARTE 2: CHAT EM TEMPO REAL (O LOOP CRÍTICO)
+ *   while (1):
+ *   1. Prompt: "[username] Sua mensagem: "
+ *   2. INPUT DO UTILIZADOR (fgets para multi-linhas):
+ *      • fgets(msg, sizeof(msg), stdin) — lê até 399 bytes + '\n'
+ *      • msg[strcspn(msg, "\n")] = '\0' — remove '\n'
+ *   3. VERIFICAR COMANDO ESPECIAL:
+ *      if (strcmp(msg, "/quit") == 0):
+ *      → Enviar: "LEAVE"
+ *      → Sair do loop while(1)
+ *      → Voltar ao menu de canais
+ *   4. SENÃO, BROADCAST:
+ *      snprintf(cmd, sizeof(cmd), "BROADCAST #%s %s", canal, msg)
+ *      → Constrói comando TCP
+ *   5. DUPLA ESCUTA COM SELECT():
+ *      fd_set readfds;
+ *      FD_ZERO(&readfds);
+ *      FD_SET(STDIN_FILENO, &readfds);    ← Escuta teclado
+ *      FD_SET(server_fd, &readfds);       ← Escuta servidor
+ *      select(maxfd+1, &readfds, ..., NULL)
+ *      • select() bloqueia até haver dados em stdin OU socket
+ *      • Permite receber mensagens de outros utilizadores durante digitação
+ *      • Manda resposta para STDOUT sem interromper prompt
+ *   6. RECEBER BROADCAST (se datos no server_fd):
+ *      recv(server_fd, ...) — recebe broadcasts do servidor
+ *      imprimir_resposta(...) — mostra com cores
+ *      Volta ao prompt (não perde contexto)
+ *
+ * MODO ADAPTATIVO:
+ *   int modo = is_admin_flag ? 2 : 1
+ *   • Colors diferentes conforme ADMIN vs USER
+ *
+ * VALIDAÇÃO:
+ *   • strcmp(msg, "/quit") — exatamente "/quit" (não "/QUIT" etc)
+ *   • strcpy() com validação de tamanho
+ *   • snprintf() com limits para evitar overflow
+ *
+ * ESTADO ALTERADO:
+ *   • current_canal — muda para novo canal
+ *
+ * RETORNO: Nenhum (void) — volta ao menu_canais
  * ============================================================================
  */
 void submenu_canais(void) {
@@ -796,23 +991,41 @@ void submenu_canais(void) {
             printf("----------------------------------------------------\n");
 
             while (1) {
+                /* ================================================
+                 * LOOP DE CHAT EM TEMPO REAL
+                 * ================================================
+                 * Aguarda input do utilizador e envia broadcasts
+                 * ao servidor para todo o canal
+                 * ================================================
+                 */
                 printf("\n [%s] Sua mensagem: ", current_user);
 
+                /* Leitura de input multi-linha
+                   fgets() retorna NULL se EOF ou erro */
                 char input[400];
                 if (!fgets(input, sizeof(input), stdin)) break;
+                
+                /* Remove newline deixado por fgets()
+                   strcspn(s, "\n") retorna posição do '\n'
+                   Substitui '\n' por '\0' (null-terminator) */
                 input[strcspn(input, "\n")] = '\0';
 
+                /* Verificar se utilizador digitou /quit (comando especial)
+                   strcmp() retorna 0 se strings são iguais */
                 if (strcmp(input, "/quit") == 0) {
                     snprintf(cmd, sizeof(cmd), "LEAVE");
                     enviar_e_receber(cmd, res, BUF_SIZE);
-                    break;
+                    break;  /* Sair do loop while(1) */
                 }
 
+                /* Se input não vazio, enviar broadcast ao canal
+                   strlen(input) > 0 evita enviar mensagens vazias */
                 if (strlen(input) > 0) {
                     snprintf(cmd, sizeof(cmd), "BROADCAST %s %s", nome_canal,
                              input);
                     enviar_e_receber(cmd, res, BUF_SIZE);
 
+                    /* Análise da resposta do servidor */
                     if (strstr(res, "BCAST_SENT")) {
                         printf(
                             " \033[1;32m[OK]\033[0m Mensagem enviada para %s\n",
@@ -1088,7 +1301,57 @@ void submenu_seguranca(void) {
 }
 
 /* ============================================================================
- * MENU PRINCIPAL (USER)
+ * FUNÇÃO: menu_user()
+ * Menu principal para utilizadores normais (não-admin).
+ *
+ * ESTRUTURA GERAL:
+ *   loop while (!sair && autenticado):
+ *   • Renderiza menu com 6 opções
+ *   • Captura input de utilizador
+ *   • Despacha para submenu ou comando apropriado
+ *   • Continua até utilizador escolher [0] Logout
+ *
+ * OPÇÕES DISPONÍVEIS:
+ *   [1] O Meu Perfil (F1)
+ *       → Chama submenu_perfil()
+ *       → Permite editar dados pessoais
+ *
+ *   [2] Lista de Contactos (F3)
+ *       → Chama submenu_contactos()
+ *       → Lista users ONLINE/OFFLINE
+ *       → Permite enviar mensagens privadas
+ *
+ *   [3] Mensagens Privadas (F5)
+ *       → Chama submenu_mensagens()
+ *       → Mostra caixa de entrada
+ *       → Permite enviar offline
+ *
+ *   [4] Chat em Canais (F10)
+ *       → Chama submenu_canais()
+ *       → Chat em tempo real com select()
+ *       → Broadcast para toda a sala
+ *
+ *   [5] Informações do Servidor (F11)
+ *       → Envia: "GET_INFO"
+ *       → Servidor responde com: versão, uptime, users, etc
+ *       → Imprime com imprimir_resposta() (cores)
+ *
+ *   [0] Terminar Sessão (F0 / Logout)
+ *       → Envia: "LOGOUT"
+ *       → Seta: sair=1, autenticado=0
+ *       → Loop termina
+ *       → Volta a menu_pre_login() em main()
+ *
+ * FLUXO DE LOGOUT:
+ *   printf("[A TERMINAR SESSÃO...]") — feedback visual
+ *   enviar_e_receber("LOGOUT", ...) — notifica servidor
+ *   sair = 1, autenticado = 0 — quebra o loop
+ *   menu_pre_login() é chamado novamente em main()
+ *
+ * CORES:
+ *   draw_header(1, ...) — modo USER (ciano \033[1;36m)
+ *
+ * RETORNO: Nenhum (void)
  * ============================================================================
  */
 void menu_user(void) {
@@ -1148,7 +1411,61 @@ void menu_user(void) {
 }
 
 /* ============================================================================
- * MENU PRINCIPAL (ADMIN)
+ * FUNÇÃO: menu_admin()
+ * Menu principal para utilizadores com privilégios de administrador.
+ *
+ * ESTRUTURA GERAL:
+ *   loop while (!sair && autenticado):
+ *   • Renderiza menu com 9 opções (mais que menu_user)
+ *   • Captura input de utilizador
+ *   • Despacha para submenu ou comando apropriado
+ *   • Continua até utilizador escolher [0] Logout
+ *
+ * OPÇÕES DISPONÍVEIS (8 + Logout):
+ *   [1-4] Como menu_user (Perfil, Contactos, Mensagens, Chat)
+ *       → Mesmo comportamento que utilizador normal
+ *       → Cores mais destacadas (ADMIN = vermelho)
+ *
+ *   [5] Gestão de Utilizadores (F7) [ADMIN ONLY]
+ *       → Chama submenu_gestao_utilizadores()
+ *       → Lista contas em PENDING (aguardando aprovação)
+ *       → Opções: APPROVE, REJECT, BAN utilizadores
+ *       → Validação de identidade (pode rejudiciar aplicação)
+ *
+ *   [6] Gestão de Canais (F8) [ADMIN ONLY]
+ *       → Chama submenu_gestao_canais()
+ *       → Listar canais, criar novo, eliminar
+ *       → Bloquear/desbloquear canais
+ *
+ *   [7] Segurança e Auditoria (F9) [ADMIN ONLY]
+ *       → Chama submenu_seguranca()
+ *       → Ver logs de actividade
+ *       → Relatórios de segurança
+ *       → Listar actions suspeitas
+ *
+ *   [8] Informações do Servidor (F11)
+ *       → Envia: "GET_INFO"
+ *       → Versão, uptime, users conectados, canais ativos, etc
+ *       → Dados administrativos (totais, estatísticas)
+ *
+ *   [0] Terminar Sessão Administrativa
+ *       → Envia: "LOGOUT"
+ *       → Seta: sair=1, autenticado=0
+ *       → Volta a menu_pre_login()
+ *       → Requer novo login para re-authenticate
+ *
+ * CORES E STYLING:
+ *   draw_header(2, ...) — modo ADMIN (vermelho \033[1;31m)
+ *   Printf: "ADMIN" destacado no header
+ *   Todas mensagens de confirmação em verde sucesso
+ *
+ * DIFERENÇAS vs menu_user:
+ *   • +3 opções (Gestão Users, Gestão Canais, Segurança)
+ *   • Cores vermelhas em vez de ciano
+ *   • Acesso a dados sensíveis do sistema
+ *   • Acesso a relatórios e auditorias
+ *
+ * RETORNO: Nenhum (void)
  * ============================================================================
  */
 void menu_admin(void) {
@@ -1220,8 +1537,106 @@ void menu_admin(void) {
 }
 
 /* ============================================================================
- * FUNÇÃO: main()
- * Ponto de entrada. Conecta ao servidor, apresenta TUI, controla fluxo.
+ * FUNÇÃO: main(int argc, char* argv[])
+ * Ponto de entrada da aplicação. Responsável por:
+ *   1. Validar argumentos CLI (IP do servidor, porto)
+ *   2. Resolver hostname (se necessário)
+ *   3. Criar socket TCP
+ *   4. Conectar ao servidor
+ *   5. Controlar fluxo de menus
+ *   6. Cleanup e encerramento
+ *
+ * ARGUMENTO CLI:
+ *   ./client_linux <IP_SERVIDOR> <PORTO>
+ *   Exemplo: ./client_linux 127.0.0.1 10000
+ *            ./client_linux localhost 10000
+ *
+ * FLUXO PASSO-A-PASSO:
+ *
+ *   1. VALIDAÇÃO DE ARGUMENTOS
+ *      if (argc != 3) → Erro se não tem exatamente 2 argumentos
+ *      fprintf(stderr, "Uso: ...") → Mensagem de ajuda
+ *      server_ip = argv[1]
+ *      server_port = atoi(argv[2]) — converte string para int
+ *
+ *   2. DNS RESOLUTION (gethostbyname)
+ *      struct hostent* he = gethostbyname(server_ip)
+ *      • Aceita IP directo: "127.0.0.1" → sem DNS lookup
+ *      • Ou hostname: "localhost" → faz DNS resolver
+ *      • Retorna: ponteiro para hostent com informações
+ *      • Se falha: he==NULL → erro, exit
+ *      • NOTA: gethostbyname() é deprecated (preferir getaddrinfo)
+ *              mas é aceitável para projeto educacional
+ *
+ *   3. CONSTRUIR ENDEREÇO DO SERVIDOR
+ *      struct sockaddr_in server_addr
+ *      • memset(&server_addr, 0, ...) — limpar estrutura
+ *      • sin_family = AF_INET — IPv4
+ *      • sin_port = htons(server_port) — converter endianness
+ *      • memcpy(&sin_addr, he->h_addr, he->h_length) — copiar IP resolvido
+ *
+ *   4. CRIAR SOCKET TCP
+ *      server_fd = socket(AF_INET, SOCK_STREAM, 0)
+ *      • AF_INET — IPv4
+ *      • SOCK_STREAM — TCP (não UDP)
+ *      • 0 — protocolo padrão (IPPROTO_TCP)
+ *      • server_fd < 0 → erro, exit
+ *      • server_fd guardado em variável global (usado por menus)
+ *
+ *   5. CONECTAR AO SERVIDOR (BLOQUEANTE)
+ *      connect(server_fd, (struct sockaddr*)&server_addr, ...)
+ *      • Bloqueia até servidor aceitar conexão ou timeout
+ *      • Se < 0 → conexão falhou (servidor offline?)
+ *      • close(server_fd) + exit
+ *      • NOTA: Esta é uma LIGAÇÃO PERSISTENTE (Etapa 3)
+ *              Socket fica aberto durante toda a sessão
+ *              (ao contrário de Etapa 2: close após cada comando)
+ *
+ *   6. MENU DE BOAS-VINDAS
+ *      draw_header(0, "CONECTADO...") — modo GUEST
+ *      Mostra: "Bem-vindo ao C-Cord v3.0!"
+ *      Mostra: "Servidor: IP:PORTO"
+ *      getchar() — aguarda ENTER
+ *
+ *   7. FLUXO DE AUTENTICAÇÃO
+ *      menu_pre_login()
+ *      • Loop até utilizador fazer login com sucesso
+ *      • Dentro: opções para login ([1]) ou registo ([2])
+ *      • Quando login bem-sucedido:
+ *        - fluxo_login() retorna 1
+ *        - is_admin_flag setado (0=USER, 1=ADMIN)
+ *        - autenticado setado a 1
+ *      • Sai do menu_pre_login() para prosseguir
+ *
+ *   8. DISPATCH PARA MENU APROPRIADO
+ *      if (is_admin_flag)
+ *          menu_admin() — 8 opções + logout
+ *      else
+ *          menu_user() — 5 opções + logout
+ *      • Loop até utilizador fazer logout ([0])
+ *      • Quando logout: sair=1, autenticado=0
+ *      • Menu termina, volta aqui (mas não recicla, vai a cleanup)
+ *
+ *   9. CLEANUP E ENCERRAMENTO
+ *      close(server_fd) — fecha socket TCP
+ *      Mensagem de despedida: "OBRIGADO POR USAR C-CORD v3.0"
+ *      return 0 — saída bem-sucedida
+ *
+ * ESTADO GLOBAL ALTERADO:
+ *   • server_fd — inicializado com socket conectado
+ *   • current_user — setado em fluxo_login()
+ *   • is_admin_flag — setado em fluxo_login()
+ *   • autenticado — setado em fluxo_login()
+ *   • login_time — setado em fluxo_login()
+ *   • current_canal — inicializado a "#geral"
+ *
+ * RETORNO:
+ *   0 — Encerramento normal
+ *   1 — Erro (argumentos, DNS, socket, conexão)
+ *
+ * ESTRUTURAS UTILIZADAS:
+ *   struct hostent — Resultado de DNS (gethostbyname)
+ *   struct sockaddr_in — Endereço IPv4 para TCP
  * ============================================================================
  */
 int main(int argc, char* argv[]) {
