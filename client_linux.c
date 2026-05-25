@@ -460,29 +460,31 @@ int fluxo_registo(int server_fd) {
  *
  * SEQUÊNCIA:
  *   1. Mostrar menu (draw_header com modo=0 GUEST)
- *   2. Pedir escolha numerada (3, 6 ou 0)
- *   3. Se 3 → chamar fluxo_login()
- *   4. Se 6 → chamar fluxo_registo()
+ *   2. Pedir escolha numerada (1, 2 ou 0) ou (3, 6, 0 compatibilidade)
+ *   3. Se 1 ou 3 → chamar fluxo_login()
+ *   4. Se 2 ou 6 → chamar fluxo_registo()
  *   5. Se 0 → fechar socket e sair
  *   6. Se sucesso em login, quebrar loop (autenticado=1)
  */
 void menu_pre_login(int server_fd) {
     while (!autenticado) {
         draw_header(0, "MENU PRINCIPAL");
-        printf("\n [ F3 ] Login\n");
-        printf(" [ F6 ] Registo\n");
-        printf(" [ F0 ] Sair\n\n Escolha: ");
+        printf("\n [ 1 ] [ F3 ] Login\n");
+        printf(" [ 2 ] [ F6 ] Registo\n");
+        printf(" [ 0 ] [ F0 ] Sair\n\n Escolha (0-2): ");
         
         int opt;
-        if (scanf("%d", &opt) != 1) opt = 0;  /* Se entrada inválida, tratar como 0 */
+        if (scanf("%d", &opt) != 1) opt = -1;  /* Se entrada inválida, tratar como -1 */
         clear_buffer();
         
-        if (opt == 3) {
+        if (opt == 1 || opt == 3) {
             /* Login: função retorna 1 se sucesso, 0 se falha */
+            /* Aceita tanto 1 quanto 3 (compatibilidade) */
             if (fluxo_login(server_fd)) break;  /* Sair do while se login OK */
         }
-        else if (opt == 6) {
+        else if (opt == 2 || opt == 6) {
             /* Registo: criar nova conta */
+            /* Aceita tanto 2 quanto 6 (compatibilidade) */
             fluxo_registo(server_fd);
             /* Após registo, volta ao menu (conta criada mas não autenticada) */
         }
@@ -491,6 +493,11 @@ void menu_pre_login(int server_fd) {
             printf("\n \033[1;36m[INFO]\033[0m Até breve!\n");
             close(server_fd);
             exit(0);
+        }
+        else {
+            /* Escolha inválida */
+            printf("\n \033[1;33m[AVISO]\033[0m Opção inválida! Escolha entre 0, 1 ou 2.\n");
+            sleep(1);
         }
     }
 }
