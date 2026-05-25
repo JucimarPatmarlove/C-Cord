@@ -52,21 +52,53 @@ int msgs_por_ler = 0;
  * ============================================================================
  */
 
+/* ============================================================================
+ * FUNÇÃO: clear_buffer()
+ * Limpa o buffer de entrada (stdin) após scanf().
+ * 
+ * Quando scanf() lê um número, deixa o '\n' no buffer. Esta função remove
+ * caracteres até encontrar a newline, preparando stdin para a próxima leitura.
+ * ============================================================================
+ */
 void clear_buffer(void) {
     int c;
     while ((c = getchar()) != '\n' && c != EOF);
 }
 
+/* ============================================================================
+ * FUNÇÃO: aguardar_enter()
+ * Pausa a execução aguardando que o utilizador pressione ENTER.
+ * 
+ * Utilizada para permitir que o utilizador veja mensagens antes de passar
+ * para o próximo ecrã. Após pressionar ENTER, o ecrã é limpo e o menu
+ * é redesenhado (via draw_header).
+ * ============================================================================
+ */
 void aguardar_enter(void) {
     printf("\n >> Pressione ENTER para continuar...");
     getchar();
 }
 
 /* ============================================================================
- * FUNÇÃO: draw_header()
- * Limpa o ecrã e desenha cabeçalho com logo e informações de sessão.
+ * FUNÇÃO: draw_header(int modo, const char* subtitulo)
+ * Renderiza o cabeçalho visual da TUI com logo ASCII e informações de sessão.
  *
- * modo: 0=GUEST, 1=USER, 2=ADMIN
+ * PARÂMETROS:
+ *   modo     — Modo de visualização: 0=GUEST, 1=USER, 2=ADMIN
+ *   subtitulo — Título adicional do ecrã (ex: "LOGIN / AUTENTICAÇÃO")
+ *
+ * FUNCIONAMENTO:
+ *   1. system("clear") — Limpa o ecrã do terminal
+ *   2. Aplica cor ANSI conforme modo:
+ *      - GUEST (0): Branco     \033[1;37m
+ *      - USER  (1): Ciano      \033[1;36m
+ *      - ADMIN (2): Vermelho   \033[1;31m
+ *   3. Imprime logo ASCII de 6 linhas (C-CORD)
+ *   4. Imprime barra separadora (====)
+ *   5. Se autenticado (modo >= 1), mostra UTILIZADOR e FUNÇÃO
+ *   6. Reset de cores com \033[0m
+ *
+ * NOTA: Este é o ponto de entrada visual de cada ecrã da aplicação.
  * ============================================================================
  */
 void draw_header(int modo, const char* subtitulo) {
@@ -109,9 +141,30 @@ void draw_header(int modo, const char* subtitulo) {
 }
 
 /* ============================================================================
- * FUNÇÃO: enviar_e_receber()
- * Envia comando ao servidor e aguarda resposta (bloqueante).
- * Usado fora do loop select (login, menus com pedido-resposta).
+ * FUNÇÃO: enviar_e_receber(const char* cmd, char* resp, int resp_sz)
+ * Envia um comando ao servidor e aguarda a resposta (bloqueante).
+ *
+ * PARÂMETROS:
+ *   cmd      — Comando a enviar (ex: "AUTH admin admin123")
+ *   resp     — Buffer onde guardar a resposta
+ *   resp_sz  — Tamanho do buffer para evitar overflow
+ *
+ * FLUXO:
+ *   1. send(server_fd, cmd, strlen(cmd), 0)
+ *      → Envia bytes do comando via socket
+ *      → Retorna -1 se falhar
+ *   2. memset(resp, 0, resp_sz)
+ *      → Limpa o buffer de resposta (inicializa com zeros)
+ *   3. recv(server_fd, resp, resp_sz-1, 0)
+ *      → Recebe até resp_sz-1 bytes (deixa espaço para '\0')
+ *   4. resp[n] = '\0'
+ *      → Null-termina a string para uso seguro em strcpy/strlen
+ *
+ * RETORNO:
+ *   > 0  — Sucesso (número de bytes recebidos)
+ *   <= 0 — Erro (conexão fechada ou falha)
+ *
+ * NOTA: Esta função é bloqueante (aguarda resposta do servidor).
  * ============================================================================
  */
 int enviar_e_receber(const char* cmd, char* resp, int resp_sz) {
@@ -123,8 +176,26 @@ int enviar_e_receber(const char* cmd, char* resp, int resp_sz) {
 }
 
 /* ============================================================================
- * FUNÇÃO: imprimir_resposta()
- * Imprime resposta do servidor linha a linha com cor adequada.
+ * FUNÇÃO: imprimir_resposta(const char* buffer)
+ * Imprime respostas do servidor linha por linha com cores ANSI apropriadas.
+ *
+ * FUNCIONAMENTO:
+ *   1. Copia a resposta para um buffer local (para não destruir original)
+ *   2. Separa em linhas usando strtok(buffer, "\n")
+ *   3. Para cada linha, detecta o tipo de mensagem:
+ *      - [timestamp] ou [tag]: Amarelo     (\033[1;33m)
+ *      - Erros (FAIL, ERRO, AUTH_FAIL...): Vermelho  (\033[1;31m)
+ *      - Sucesso (_OK, AUTH_SUCCESS...):   Verde     (\033[1;32m)
+ *      - Avisos ([!], [AVISO]):            Amarelo   (\033[1;33m)
+ *      - Dados/resto:                      Ciano     (\033[1;36m)
+ *   4. Imprime cada linha com a cor apropriada
+ *   5. Reset de cores com \033[0m
+ *
+ * PROPÓSITO:
+ *   Apresentar respostas do servidor de forma clara e visualmente
+ *   diferenciada, facilitando identificação de erros vs sucessos.
+ *
+ * NOTA: Remove caracteres \r (carriage return) que podem vir do servidor.
  * ============================================================================
  */
 void imprimir_resposta(const char* buffer) {
@@ -161,8 +232,41 @@ void imprimir_resposta(const char* buffer) {
 }
 
 /* ============================================================================
- * FLUXO DE LOGIN
- * Conforme mockup: credenciais → resultado → opções em caso de falha.
+ * FUNÇÃO: fluxo_login()
+ * Implementa o fluxo completo de autenticação de um utilizador.
+ *
+ * FLUXO:
+ *   1. Loop até login bem-sucedido ou cancelamento
+ *   2. Draw header GUEST com subtítulo "LOGIN / AUTENTICAÇÃO"
+ *   3. Input: pedir nome de utilizador e palavra-passe
+ *   4. Construir comando: "AUTH username password"
+ *   5. Enviar ao servidor e aguardar resposta
+ *   6. Analisar resposta:
+ *      - AUTH_SUCCESS:ADMIN
+ *        → is_admin_flag=1, autenticado=1, ir para menu_admin()
+ *      - AUTH_SUCCESS:USER
+ *        → is_admin_flag=0, autenticado=1, ir para menu_user()
+ *      - AUTH_PENDING
+ *        → Mostrar "Conta aguarda aprovação do administrador"
+ *        → Opção de retry ou voltar
+ *      - AUTH_INACTIVE
+ *        → Mostrar "Conta suspensa"
+ *        → Opção de retry ou voltar
+ *      - AUTH_FAIL ou outro
+ *        → Mostrar "FALHA NO LOGIN" com dicas (Caps Lock, username, registo)
+ *        → Opção de retry ou voltar
+ *   7. Retornar 1 (sucesso) ou 0 (cancelado)
+ *
+ * ESTADO ALTERADO:
+ *   - current_user[50]      — Nome do utilizador autenticado
+ *   - is_admin_flag         — 1 se ADMIN, 0 se USER
+ *   - autenticado           — 1 (marcado como autenticado)
+ *   - login_time            — Timestamp do login (para duração sessão)
+ *   - current_canal         — Inicializado a "#geral"
+ *
+ * RETORNO:
+ *   1 — Login bem-sucedido, pronto para menu_user() ou menu_admin()
+ *   0 — Cancelado ou erro (volta a menu_pre_login)
  * ============================================================================
  */
 int fluxo_login(void) {
