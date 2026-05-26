@@ -992,48 +992,79 @@ void submenu_canais(void) {
 
             while (1) {
                 /* ================================================
-                 * LOOP DE CHAT EM TEMPO REAL
-                 * ================================================
-                 * Aguarda input do utilizador e envia broadcasts
-                 * ao servidor para todo o canal
+                 * LOOP DE CHAT COM select() — DUPLA ESCUTA (BUG 3 CORRIGIDO)
+                 * stdin: input do utilizador
+                 * server_fd: broadcasts de outros utilizadores
                  * ================================================
                  */
                 printf("\n [%s] Sua mensagem: ", current_user);
+                fflush(stdout);
 
-                /* Leitura de input multi-linha
-                   fgets() retorna NULL se EOF ou erro */
-                char input[400];
-                if (!fgets(input, sizeof(input), stdin)) break;
+                fd_set readfds;
+                FD_ZERO(&readfds);
+                FD_SET(STDIN_FILENO, &readfds);
+                FD_SET(server_fd, &readfds);
+                int maxfd = server_fd + 1;
 
-                /* Remove newline deixado por fgets()
-                   strcspn(s, "\n") retorna posição do '\n'
-                   Substitui '\n' por '\0' (null-terminator) */
-                input[strcspn(input, "\n")] = '\0';
+                /* select() bloqueia até haver actividade em stdin OU socket */
+                int activity = select(maxfd, &readfds, NULL, NULL, NULL);
+                if (activity < 0) break;
 
-                /* Verificar se utilizador digitou /quit (comando especial)
-                   strcmp() retorna 0 se strings são iguais */
-                if (strcmp(input, "/quit") == 0) {
-                    snprintf(cmd, sizeof(cmd), "LEAVE");
-                    enviar_e_receber(cmd, res, BUF_SIZE);
-                    break; /* Sair do loop while(1) */
+                /* ===== MENSAGEM CHEGOU DO SERVIDOR (broadcast de outro user) ===== */
+                if (FD_ISSET(server_fd, &readfds)) {
+                    char incoming[BUF_SIZE];
+                    int n = recv(server_fd, incoming, BUF_SIZE - 1, 0);
+                    if (n <= 0) {
+                        printf("\n \033[1;31m[ERRO]\033[0m Ligação perdida.\n");
+                        break;
+                    }
+                    incoming[n] = '\0';
+                    /* Apagar a linha do prompt antes de imprimir */
+                    printf("\r\033[K");
+                    imprimir_resposta(incoming);
+                    /* Reimprime o prompt */
+                    printf(" [%s] Sua mensagem: ", current_user);
+                    fflush(stdout);
+                    continue;
                 }
 
-                /* Se input não vazio, enviar broadcast ao canal
-                   strlen(input) > 0 evita enviar mensagens vazias */
-                if (strlen(input) > 0) {
-                    snprintf(cmd, sizeof(cmd), "BROADCAST %s %s", nome_canal,
-                             input);
-                    enviar_e_receber(cmd, res, BUF_SIZE);
+                /* ===== UTILIZADOR ESCREVEU ALGO ===== */
+                if (FD_ISSET(STDIN_FILENO, &readfds)) {
+                    char input[400];
+                    if (!fgets(input, sizeof(input), stdin)) break;
+                    input[strcspn(input, "\n")] = '\0';
 
-                    /* Análise da resposta do servidor */
-                    if (strstr(res, "BCAST_SENT")) {
-                        printf(
-                            " \033[1;32m[OK]\033[0m Mensagem enviada para %s\n",
-                            nome_canal);
-                    } else {
-                        printf(
-                            " \033[1;31m[ERRO]\033[0m Falha ao enviar "
-                            "mensagem\n");
+                    if (strcmp(input, "/quit") == 0) {
+                        snprintf(cmd, sizeof(cmd), "LEAVE");
+                        enviar_e_receber(cmd, res, BUF_SIZE);
+                        break;
+                    }
+
+                    if (strlen(input) > 0) {
+                        /* BUG 1 CORRIGIDO: enviar só a mensagem, sem o canal */
+                        snprintf(cmd, sizeof(cmd), "BROADCAST %s", input);
+                        if (send(server_fd, cmd, strlen(cmd), 0) < 0) {
+                            printf(" \033[1;31m[ERRO]\033[0m Falha ao enviar.\n");
+                            break;
+                        }
+                        /* Ler resposta BCAST_SENT com timeout */
+                        memset(res, 0, BUF_SIZE);
+                        struct timeval tv = {2, 0};
+                        fd_set rfd;
+                        FD_ZERO(&rfd);
+                        FD_SET(server_fd, &rfd);
+                        if (select(server_fd + 1, &rfd, NULL, NULL, &tv) > 0) {
+                            int n = recv(server_fd, res, BUF_SIZE - 1, 0);
+                            if (n > 0) {
+                                res[n] = '\0';
+                                if (strstr(res, "BCAST_SENT")) {
+                                    printf(
+                                        " \033[1;32m[OK]\033[0m Mensagem "
+                                        "enviada para %s\n",
+                                        nome_canal);
+                                }
+                            }
+                        }
                     }
                 }
             }

@@ -1325,6 +1325,15 @@ int main() {
                     log_type = 2;
                 }
 
+                else if (strcmp(buffer, "LOGOUT") == 0) {
+                    strcpy(response, "LOGOUT_OK");
+                    sprintf(log_msg, "LOGOUT: '%s'", clientes[i].username);
+                    log_type = 1;
+                    clientes[i].autenticado = 0;
+                    memset(clientes[i].username, 0, sizeof(clientes[i].username));
+                    memset(clientes[i].canal, 0, sizeof(clientes[i].canal));
+                }
+
                 else {
                     strcpy(response, "CMD_INVALID");
                     snprintf(log_msg, sizeof(log_msg) - 1,
