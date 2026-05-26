@@ -17,3 +17,6 @@ inbox.txt
 .DS_Store
 *.swp
 *~
+
+# Ficheiros de referência (não commitar)
+ETAPA3_FINAL.txt
