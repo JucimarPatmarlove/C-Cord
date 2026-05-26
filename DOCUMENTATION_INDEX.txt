@@ -1,0 +1,289 @@
+═══════════════════════════════════════════════════════════════════════════════
+  📚 C-CORD ETAPA 3 — ÍNDICE COMPLETO DE DOCUMENTAÇÃO
+═══════════════════════════════════════════════════════════════════════════════
+
+STATUS ATUAL: 🔴 NOT PRODUCTION READY (9 vulnerabilidades identificadas)
+
+───────────────────────────────────────────────────────────────────────────────
+🔒 DOCUMENTAÇÃO DE SEGURANÇA (Audit Extremo)
+───────────────────────────────────────────────────────────────────────────────
+
+1. AUDIT_SEGURANCA_EXTREMO.md (783 linhas) ⭐ PRIMARY
+   ├─ Para quem: Engenheiros, Developers
+   ├─ O quê: Análise técnica completa de 9 vulnerabilidades
+   ├─ Contém:
+   │  • Descrição de cada vulnerabilidade (V1-V9)
+   │  • Raiz do problema (root cause analysis)
+   │  • Impacto (Crash, DoS, RCE, Data Corruption)
+   │  • Código ANTES (vulnerável)
+   │  • Código DEPOIS (corrigido)
+   │  • Testes de reprodução (proof of concept)
+   │  • Recomendações de fix
+   └─ Como usar: Ler para entender completamente cada bug
+
+2. FIXES_PRONTOS_APLICAR.md (600+ linhas) ⭐ ACTION
+   ├─ Para quem: Developers aplicando fixes
+   ├─ O quê: Patches cirúrgicos prontos a colar
+   ├─ Contém:
+   │  • FIX #1-9 com linhas exatas
+   │  • Código ANTES (vulnerável)
+   │  • Código DEPOIS (substitua isto por isto)
+   │  • Headers a adicionar (#include <fcntl.h>)
+   │  • Instruções de teste para cada fix
+   │  • Checklist de aplicação por prioridade
+   └─ Como usar: Copia/cola código DEPOIS nas linhas ANTES
+
+3. EXECUTIVE_SUMMARY_SEGURANCA.md
+   ├─ Para quem: QA/Testers, Project Managers
+   ├─ O quê: Resumo executivo com risco/remediação
+   ├─ Contém:
+   │  • Matriz de risco (5 críticas, 2 altas, etc)
+   │  • 3 fases de remediação com timeline
+   │  • Testes de reprodução rápidos
+   │  • Validação pós-remediação
+   │  • Estatísticas e conclusões
+   └─ Como usar: Lê para entender status de alto nível
+
+4. REMEDIATION_CHECKLIST.txt (184 linhas) ⭐ TRACKING
+   ├─ Para quem: Qualquer pessoa
+   ├─ O quê: Checklist interativa com [ ] para marcar
+   ├─ Contém:
+   │  • Phase 1-3: [ ] FIX #1-9
+   │  • [ ] Compilação (gcc -Wall...)
+   │  • [ ] Testes (10 validações)
+   │  • [ ] Documentação final
+   │  • Progress tracking (0/9 → 9/9)
+   └─ Como usar: Marca [ ] → [✅] conforme progride
+
+5. AUDIT_COMPLETE.md ⭐ CONCLUSÃO
+   ├─ Para quem: Todos
+   ├─ O quê: Este documento — resumo final
+   ├─ Contém:
+   │  • Estatísticas (9 vulns, 3,112 linhas)
+   │  • Vulnerabilidades resumidas
+   │  • Plano de remediação (3 fases)
+   │  • Próximos passos
+   │  • Questões abertas
+   └─ Como usar: Começar por aqui, depois ler os acima
+
+───────────────────────────────────────────────────────────────────────────────
+📖 DOCUMENTAÇÃO DE PROJETO (Histórico)
+───────────────────────────────────────────────────────────────────────────────
+
+6. EVOLUCAO_CODIGO.md (816 linhas)
+   ├─ O quê: Histórico de desenvolvimento em 3 etapas
+   ├─ Etapa 1: TCP básico (semana 1)
+   ├─ Etapa 2: Autenticação + Menus (semana 2)
+   ├─ Etapa 3: select() + Persistent (semana 3)
+   └─ Uso: Entender how/why bugs foram introduzidos
+
+7. VALIDACAO_RUNTIME.md (105 linhas)
+   ├─ O quê: Testes runtime com netcat
+   ├─ Valida: LOGOUT, BROADCAST, persistent connection
+   └─ Uso: Referência de testes pré-audit
+
+8. INDICE_DOCUMENTACAO.md (289 linhas)
+   ├─ O quê: Roadmap para ler documentação
+   ├─ Para: Estudantes, Devs, QA, Project Final
+   └─ Uso: Decidir por onde começar
+
+9. RESUMO_FINAL.txt (261 linhas)
+   ├─ O quê: Resumo pré-audit (status: Production Ready)
+   └─ Nota: Status MUDOU após audit extremo
+
+───────────────────────────────────────────────────────────────────────────────
+📋 FICHEIROS DE CÓDIGO
+───────────────────────────────────────────────────────────────────────────────
+
+10. server_linux.c (1,355 linhas)
+    ├─ Contém: 🔴 V1, V2, V3, V4, V5, V6, V7, V8, V9
+    ├─ Crítica: select() loop, recv, command handlers
+    └─ Fix: Ver FIXES_PRONTOS_APLICAR.md
+
+11. client_linux.c (1,757 linhas)
+    ├─ Contém: 🔴 V5, V7, V8, V9, V10, V11
+    ├─ Crítica: Dupla escuta (stdin + socket)
+    └─ Fix: Ver FIXES_PRONTOS_APLICAR.md
+
+───────────────────────────────────────────────────────────────────────────────
+🎯 COMO COMEÇAR (POR ROLE)
+───────────────────────────────────────────────────────────────────────────────
+
+👨‍💻 DEVELOPER (Aplicando fixes):
+   1. Lê: AUDIT_COMPLETE.md (visão geral)
+   2. Lê: AUDIT_SEGURANCA_EXTREMO.md (entender bugs)
+   3. Abre: FIXES_PRONTOS_APLICAR.md (lado a lado com IDE)
+   4. Marca: REMEDIATION_CHECKLIST.txt (tracking)
+   5. Compila: gcc -Wall -Wextra -Werror
+   6. Testa: 10 testes de validação
+
+🧪 QA/TESTER:
+   1. Lés: EXECUTIVE_SUMMARY_SEGURANCA.md (testes de repro)
+   2. Abre: REMEDIATION_CHECKLIST.txt (validation tests)
+   3. Executa: Testes pré-fix (baseline)
+   4. Depois de fixes: Testes pós-fix (verificar)
+
+🏢 PROJECT MANAGER:
+   1. Lés: AUDIT_COMPLETE.md (status alto nível)
+   2. Lés: EXECUTIVE_SUMMARY_SEGURANCA.md (timeline)
+   3. Rastreia: REMEDIATION_CHECKLIST.txt (0/9 → 9/9)
+
+🎓 ESTUDANTE:
+   1. Lés: EVOLUCAO_CODIGO.md (entender arquitetura)
+   2. Lés: AUDIT_SEGURANCA_EXTREMO.md (aprender vulnerabilidades)
+   3. Compara: Código ANTES vs DEPOIS em cada fix
+
+───────────────────────────────────────────────────────────────────────────────
+✅ FLUXO DE REMEDIAÇÃO
+───────────────────────────────────────────────────────────────────────────────
+
+                    START
+                      ↓
+          ┌──────────────────────┐
+          │ AUDIT_COMPLETE.md    │ ← Lê visão geral
+          │ (5 min read)         │
+          └──────────┬───────────┘
+                      ↓
+          ┌──────────────────────┐
+          │ FIXES_PRONTOS...md   │ ← Abre em IDE
+          │ (código lado-a-lado) │   Aplica FIX 1-5
+          └──────────┬───────────┘   (Fase 1)
+                      ↓
+          ┌──────────────────────┐
+          │ Compila + Testa      │ ← gcc -Wall -Wextra -Werror
+          │ PHASE 1              │   Run test suite
+          └──────────┬───────────┘
+                      ↓
+          ┌──────────────────────┐
+          │ Aplica FIX 6-7       │ ← (Fase 2)
+          │ (Ban, strtok_r)      │
+          └──────────┬───────────┘
+                      ↓
+          ┌──────────────────────┐
+          │ Compila + Testa      │
+          │ PHASE 2              │
+          └──────────┬───────────┘
+                      ↓
+          ┌──────────────────────┐
+          │ Aplica FIX 8-9       │ ← (Fase 3)
+          │ (timeout, cosmética) │
+          └──────────┬───────────┘
+                      ↓
+          ┌──────────────────────┐
+          │ Final smoke test     │ ← Login, chat, logout
+          │ (all features)       │   All working?
+          └──────────┬───────────┘
+                      ↓
+          ┌──────────────────────┐
+          │ git commit + push    │ ← ✅ PRODUCTION READY
+          │ Mark REMEDIATION...  │
+          │ [ ] → [✅] 9/9       │
+          └──────────┬───────────┘
+                      ↓
+                    DONE ✅
+
+───────────────────────────────────────────────────────────────────────────────
+🔗 RELAÇÕES ENTRE DOCUMENTOS
+───────────────────────────────────────────────────────────────────────────────
+
+AUDIT_COMPLETE.md (Start Here)
+    ├─ References: AUDIT_SEGURANCA_EXTREMO.md (detailed vulns)
+    ├─ References: FIXES_PRONTOS_APLICAR.md (actual code)
+    ├─ References: EXECUTIVE_SUMMARY_SEGURANCA.md (tests)
+    ├─ References: REMEDIATION_CHECKLIST.txt (tracking)
+    ├─ References: EVOLUCAO_CODIGO.md (history)
+    └─ References: INDICE_DOCUMENTACAO.md (index)
+
+AUDIT_SEGURANCA_EXTREMO.md (Technical Deep Dive)
+    ├─ Explains: Root causes for each vulnerability
+    ├─ Shows: Code BEFORE (vulnerable)
+    ├─ Shows: Code AFTER (fixed)
+    └─ Proves: Test reproduction cases
+
+FIXES_PRONTOS_APLICAR.md (Implementation)
+    ├─ Provides: Exact line numbers
+    ├─ Provides: Code to copy/paste
+    ├─ Includes: Header additions
+    └─ Lists: Validation tests
+
+REMEDIATION_CHECKLIST.txt (Tracking)
+    ├─ Tracks: 9 fixes progress
+    ├─ Tracks: Compilation status
+    ├─ Tracks: 10 validation tests
+    └─ Progress: 0/9 → 9/9
+
+───────────────────────────────────────────────────────────────────────────────
+📊 ESTATÍSTICAS
+───────────────────────────────────────────────────────────────────────────────
+
+Documentos criados: 11
+├─ Segurança (5): AUDIT*, FIXES*, EXECUTIVE*, REMEDIATION*, AUDIT_COMPLETE
+└─ Projeto (6): EVOLUCAO, VALIDACAO, INDICE, RESUMO, + files
+
+Linhas de documentação: 2,500+
+├─ AUDIT_SEGURANCA_EXTREMO.md: 783
+├─ FIXES_PRONTOS_APLICAR.md: 600+
+├─ EVOLUCAO_CODIGO.md: 816
+├─ REMEDIATION_CHECKLIST.txt: 184
+└─ Outros: 100+
+
+Git commits: 7
+├─ Evolução em 3 etapas
+├─ Validação runtime
+├─ Índice de documentação
+├─ Resumo final
+├─ Audit extremo
+├─ Guias de remediação
+└─ Conclusão
+
+───────────────────────────────────────────────────────────────────────────────
+⚖️ MATRIZ DE SEVERIDADE
+───────────────────────────────────────────────────────────────────────────────
+
+Crítica (��) — IMMEDIATE ACTION REQUIRED
+├─ V1: FD Memory Leak
+├─ V2: recv() Buffer Overflow
+├─ V3: Race Condition File I/O
+├─ V4: SEND_MSG Buffer Overflow
+└─ V5: Auth Bypass BROADCAST
+
+Alta (🟠) — HIGH PRIORITY
+├─ V6: Ban Doesn't Kick
+└─ V7: strtok() Non-Reentrant
+
+Média (🟡) — MEDIUM PRIORITY
+└─ V8: select() Missing Timeout
+
+Cosmética (🟢) — LOW PRIORITY
+└─ V9: Visual Collision
+
+───────────────────────────────────────────────────────────────────────────────
+✅ PRÓXIMOS PASSOS
+───────────────────────────────────────────────────────────────────────────────
+
+1. [ ] Ler AUDIT_COMPLETE.md (este ficheiro)
+2. [ ] Ler AUDIT_SEGURANCA_EXTREMO.md (entender vulns)
+3. [ ] Abrir FIXES_PRONTOS_APLICAR.md (lado a lado)
+4. [ ] Aplicar FIX #1-5 (Phase 1 críticas)
+5. [ ] Compilar + testar (gcc -Wall -Wextra -Werror)
+6. [ ] Aplicar FIX #6-7 (Phase 2 altas)
+7. [ ] Compilar + testar
+8. [ ] Aplicar FIX #8-9 (Phase 3)
+9. [ ] Smoke test (login, chat, logout)
+10. [ ] git commit + push
+11. [ ] Mark REMEDIATION_CHECKLIST.txt [✅] 9/9
+12. [ ] Status: ✅ PRODUCTION READY
+
+───────────────────────────────────────────────────────────────────────────────
+
+📞 SUPPORT
+
+Se tiver dúvidas:
+1. Referência: AUDIT_SEGURANCA_EXTREMO.md (responde 90% de dúvidas)
+2. Técnico: FIXES_PRONTOS_APLICAR.md (código exato)
+3. Teste: EXECUTIVE_SUMMARY_SEGURANCA.md (repro tests)
+4. Tracking: REMEDIATION_CHECKLIST.txt (status)
+
+═══════════════════════════════════════════════════════════════════════════════
+✅ FIM — Pronto para remediação
+
