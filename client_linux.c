@@ -55,7 +55,7 @@ int msgs_por_ler = 0;
 /* ============================================================================
  * FUNÇÃO: clear_buffer()
  * Limpa o buffer de entrada (stdin) após scanf().
- * 
+ *
  * Quando scanf() lê um número, deixa o '\n' no buffer. Esta função remove
  * caracteres até encontrar a newline, preparando stdin para a próxima leitura.
  * ============================================================================
@@ -68,7 +68,7 @@ void clear_buffer(void) {
 /* ============================================================================
  * FUNÇÃO: aguardar_enter()
  * Pausa a execução aguardando que o utilizador pressione ENTER.
- * 
+ *
  * Utilizada para permitir que o utilizador veja mensagens antes de passar
  * para o próximo ecrã. Após pressionar ENTER, o ecrã é limpo e o menu
  * é redesenhado (via draw_header).
@@ -1004,7 +1004,7 @@ void submenu_canais(void) {
                    fgets() retorna NULL se EOF ou erro */
                 char input[400];
                 if (!fgets(input, sizeof(input), stdin)) break;
-                
+
                 /* Remove newline deixado por fgets()
                    strcspn(s, "\n") retorna posição do '\n'
                    Substitui '\n' por '\0' (null-terminator) */
@@ -1015,7 +1015,7 @@ void submenu_canais(void) {
                 if (strcmp(input, "/quit") == 0) {
                     snprintf(cmd, sizeof(cmd), "LEAVE");
                     enviar_e_receber(cmd, res, BUF_SIZE);
-                    break;  /* Sair do loop while(1) */
+                    break; /* Sair do loop while(1) */
                 }
 
                 /* Se input não vazio, enviar broadcast ao canal
@@ -1054,15 +1054,37 @@ void submenu_gestao_utilizadores(void) {
     while (!sair) {
         draw_header(2, "Gestão de Utilizadores");
 
-        char res[BUF_SIZE];
-        enviar_e_receber("LIST_PENDING", res, BUF_SIZE);
+        /* Obter lista de TODOS os utilizadores */
+        char res_all[BUF_SIZE];
+        enviar_e_receber("LIST_ALL", res_all, BUF_SIZE);
+
+        printf("\n [UTILIZADORES REGISTADOS NO SISTEMA]\n");
+        printf(" ID  | Utilizador       | Função | Estado\n");
+        printf("-----+------------------+--------+-----------\n");
+
+        char copia_all[BUF_SIZE];
+        strncpy(copia_all, res_all, BUF_SIZE - 1);
+        char* linha_all = strtok(copia_all, "\n");
+        int count_all = 0;
+        while (linha_all) {
+            if (strchr(linha_all, '|') && !strstr(linha_all, "---")) {
+                printf(" %s\n", linha_all);
+                count_all++;
+            }
+            linha_all = strtok(NULL, "\n");
+        }
+        if (count_all == 0) printf(" (sem utilizadores registados)\n");
+
+        /* Obter lista de contas PENDENTES */
+        char res_pending[BUF_SIZE];
+        enviar_e_receber("LIST_PENDING", res_pending, BUF_SIZE);
 
         printf("\n [CONTAS PENDENTES DE APROVAÇÃO]\n");
         printf(" Utilizador       | Data Registo\n");
         printf("------------------+----------------------------\n");
 
         char copia[BUF_SIZE];
-        strncpy(copia, res, BUF_SIZE - 1);
+        strncpy(copia, res_pending, BUF_SIZE - 1);
         char* linha = strtok(copia, "\n");
         int count = 0;
         while (linha) {
