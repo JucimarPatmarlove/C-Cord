@@ -1,4 +1,19 @@
+# Binários compilados
+client_linux
+server_linux
+client
+server
+
+# Ficheiros de log e temporários
 logs.txt
 inbox.txt
-server
-client
+*.o
+*.a
+*.so
+
+# Editor e sistema
+.vscode/
+.sixth/
+.DS_Store
+*.swp
+*~

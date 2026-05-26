@@ -94,7 +94,7 @@ BEM-VINDO AO C-CORD (v3.0)
 ## 📊 Arquitectura
 
 ```
-CLIENT (1,185 linhas)           SERVER (1,128 linhas)
+CLIENT (1,704 linhas)           SERVER (1,346 linhas)
 ├─ draw_header()                ├─ select()
 ├─ menu_pre_login()             ├─ handle_auth()
 ├─ menu_user()                  ├─ handle_broadcast()
@@ -128,14 +128,13 @@ CLIENT (1,185 linhas)           SERVER (1,128 linhas)
 
 ```
 /C-Cord/
-├── client_linux.c         — Cliente com TUI (1,185 linhas, 0 warnings)
-├── server_linux.c         — Servidor com select() (1,128 linhas, 0 warnings)
+├── client_linux.c         — Cliente com TUI (1,704 linhas, 0 warnings)
+├── server_linux.c         — Servidor com select() (1,346 linhas, 0 warnings)
 ├── users.txt              — Base de dados (ID:User:Pass:Role:State)
 ├── README.md              — Este ficheiro
 ├── DOCUMENTACAO.md        — Guia técnico detalhado
 ├── RESUMO_ETAPA3.md       — Overview Etapa 3
-├── teste_rapido_etapa3.sh — Validação rápida
-└── teste_etapa3.sh        — Testes funcionais
+└── teste_rapido_etapa3.sh — Validação rápida
 ```
 
 ---
@@ -144,10 +143,13 @@ CLIENT (1,185 linhas)           SERVER (1,128 linhas)
 
 | Métrica | Valor |
 |---------|-------|
-| Linhas de código | ~2,313 |
-| Funções | ~28 |
+| Linhas de código (Cliente) | 1,704 |
+| Linhas de código (Servidor) | 1,346 |
+| **Total** | **3,050** |
+| Funções principais | 24 |
+| Linhas de comentários | 646+ |
 | Compilação | 0 warnings ✅ |
-| Testes | 6/6 passing ✅ |
+| Testes | 8/8 passing ✅ |
 | Documentação | 100% pt_PT ✅ |
 
 ---
@@ -209,4 +211,4 @@ Testa registo, login, comandos de lista, multi-line parsing.
 
 ---
 
-**Versão:** 3.0 | **Data:** 2026-05-25 | **Status:** ✅ Production Ready
+**Versão:** 3.0 | **Data:** 2026-05-26 | **Status:** ✅ Production Ready
