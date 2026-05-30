@@ -773,8 +773,8 @@ void handle_broadcast(int client_idx, const char* msg, char* response) {
 
     /* Construir mensagem para broadcast */
     char bcast_msg[BUF_SIZE];
-    sprintf(bcast_msg, "[%s] %s: %s", clientes[client_idx].canal,
-            clientes[client_idx].username, msg);
+    snprintf(bcast_msg, sizeof(bcast_msg), "[%s] %s: %s",
+             clientes[client_idx].canal, clientes[client_idx].username, msg);
 
     /* Enviar para todos os clientes no mesmo canal */
     for (int i = 0; i < MAX_CLIENTES; i++) {
@@ -1223,31 +1223,54 @@ int main() {
                 }
 
                 else if (strcmp(buffer, "LIST_ALL") == 0) {
-                    list_all(response);
-                    sprintf(log_msg, "LIST_ALL");
-                    log_type = 0;
+                    if (!clientes[i].autenticado) {
+                        strcpy(response, "ERRO: Nao autenticado.");
+                        log_type = 3;
+                    } else {
+                        list_all(response);
+                        sprintf(log_msg, "LIST_ALL");
+                        log_type = 0;
+                    }
                 }
 
                 else if (strcmp(buffer, "LIST_PENDING") == 0) {
-                    list_pending(response);
-                    sprintf(log_msg, "LIST_PENDING");
-                    log_type = 0;
+                    if (!clientes[i].autenticado) {
+                        strcpy(response, "ERRO: Nao autenticado.");
+                        log_type = 3;
+                    } else {
+                        list_pending(response);
+                        sprintf(log_msg, "LIST_PENDING");
+                        log_type = 0;
+                    }
                 }
 
                 else if (strncmp(buffer, "CHECK_INBOX ", 12) == 0) {
                     char user[50];
                     sscanf(buffer + 12, "%49s", user);
-                    check_inbox(user, response);
-                    sprintf(log_msg, "CHECK_INBOX: '%s'", user);
-                    log_type = 0;
+                    if (!clientes[i].autenticado ||
+                        strcmp(clientes[i].username, user) != 0) {
+                        strcpy(response,
+                               "ERRO: Acesso negado a esta caixa de entrada.");
+                    } else {
+                        check_inbox(user, response);
+                        sprintf(log_msg, "CHECK_INBOX: '%s'", user);
+                        log_type = 0;
+                    }
                 }
 
                 else if (strncmp(buffer, "SEND_MSG ", 9) == 0) {
                     char dest[50], from[50], msg[400];
                     sscanf(buffer + 9, "%49s %49s %399[^\n]", dest, from, msg);
-                    send_msg(dest, from, msg, response);
-                    sprintf(log_msg, "SEND_MSG: de '%s' para '%s'", from, dest);
-                    log_type = 1;
+                    if (!clientes[i].autenticado ||
+                        strcmp(clientes[i].username, from) != 0) {
+                        strcpy(response,
+                               "ERRO: Remetente forjado ou sessao invalida.");
+                    } else {
+                        send_msg(dest, from, msg, response);
+                        sprintf(log_msg, "SEND_MSG: de '%s' para '%s'", from,
+                                dest);
+                        log_type = 1;
+                    }
                 }
 
                 else if (strncmp(buffer, "REGISTER ", 9) == 0) {
@@ -1258,28 +1281,43 @@ int main() {
                     log_type = 1;
                 }
 
-                else if (strncmp(buffer, "APPROVE_USER ", 13) == 0) {
-                    char admin[50], target[50];
-                    sscanf(buffer + 13, "%49s %49s", admin, target);
-                    approve_user(admin, target, response);
-                    sprintf(log_msg, "APPROVE: '%s' por '%s'", target, admin);
-                    log_type = 1;
+                else if (strncmp(buffer, "APPROVE ", 8) == 0) {
+                    char target[50];
+                    sscanf(buffer + 8, "%49s", target);
+                    if (!clientes[i].autenticado) {
+                        strcpy(response, "APPROVE_FAIL: Sessao invalida.");
+                    } else {
+                        approve_user(clientes[i].username, target, response);
+                        sprintf(log_msg, "APPROVE: '%s' por '%s'", target,
+                                clientes[i].username);
+                        log_type = 1;
+                    }
                 }
 
-                else if (strncmp(buffer, "SUSPEND_USER ", 13) == 0) {
-                    char admin[50], target[50];
-                    sscanf(buffer + 13, "%49s %49s", admin, target);
-                    suspend_user(admin, target, response);
-                    sprintf(log_msg, "SUSPEND: '%s' por '%s'", target, admin);
-                    log_type = 1;
+                else if (strncmp(buffer, "BAN ", 4) == 0) {
+                    char target[50];
+                    sscanf(buffer + 4, "%49s", target);
+                    if (!clientes[i].autenticado) {
+                        strcpy(response, "BAN_FAIL: Sessao invalida.");
+                    } else {
+                        suspend_user(clientes[i].username, target, response);
+                        sprintf(log_msg, "BAN: '%s' por '%s'", target,
+                                clientes[i].username);
+                        log_type = 1;
+                    }
                 }
 
-                else if (strncmp(buffer, "DELETE_USER ", 12) == 0) {
-                    char admin[50], target[50];
-                    sscanf(buffer + 12, "%49s %49s", admin, target);
-                    delete_user(admin, target, response);
-                    sprintf(log_msg, "DELETE: '%s' por '%s'", target, admin);
-                    log_type = 1;
+                else if (strncmp(buffer, "REJECT ", 7) == 0) {
+                    char target[50];
+                    sscanf(buffer + 7, "%49s", target);
+                    if (!clientes[i].autenticado) {
+                        strcpy(response, "REJECT_FAIL: Sessao invalida.");
+                    } else {
+                        delete_user(clientes[i].username, target, response);
+                        sprintf(log_msg, "REJECT: '%s' por '%s'", target,
+                                clientes[i].username);
+                        log_type = 1;
+                    }
                 }
 
                 else if (strncmp(buffer, "VIEW_LOGS ", 10) == 0) {
@@ -1330,7 +1368,8 @@ int main() {
                     sprintf(log_msg, "LOGOUT: '%s'", clientes[i].username);
                     log_type = 1;
                     clientes[i].autenticado = 0;
-                    memset(clientes[i].username, 0, sizeof(clientes[i].username));
+                    memset(clientes[i].username, 0,
+                           sizeof(clientes[i].username));
                     memset(clientes[i].canal, 0, sizeof(clientes[i].canal));
                 }
 

@@ -82,6 +82,7 @@ Utilizador vê resultado
 #### Secções Principais
 
 ##### 1. **Includes e Definições**
+
 ```c
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -101,6 +102,7 @@ Utilizador vê resultado
 - `unistd.h` — POSIX utilities (close, sleep)
 
 ##### 2. **Variáveis Globais (Estado da Sessão)**
+
 ```c
 char   current_user[50]      /* Utilizador autenticado */
 int    is_admin_flag          /* 0=USER, 1=ADMIN */
@@ -111,6 +113,7 @@ int    server_fd              /* File descriptor do socket */
 ```
 
 ##### 3. **Utilitários**
+
 ```c
 void clear_buffer()           /* Limpar stdin após scanf */
 void aguardar_enter()         /* Pausar até ENTER */
@@ -119,6 +122,7 @@ void draw_header(int modo, const char *subtitulo)
 ```
 
 ##### 4. **Comunicação TCP**
+
 ```c
 int enviar_e_receber(const char *cmd, char *resp, int resp_sz)
 /* Enviar comando bloqueante e aguardar resposta */
@@ -128,12 +132,14 @@ void imprimir_resposta(const char *buffer)
 ```
 
 ##### 5. **Fluxos de Autenticação**
+
 ```c
 int fluxo_login()             /* Menu login interactivo */
 int fluxo_registo()           /* Menu registo com validação */
 ```
 
 ##### 6. **Menus**
+
 ```c
 void menu_pre_login()         /* Menu GUEST (antes login) */
 void menu_user()              /* Menu utilizador normal */
@@ -141,6 +147,7 @@ void menu_admin()             /* Menu administrador */
 ```
 
 ##### 7. **Submenus (6 funções)**
+
 ```c
 void submenu_perfil()              /* Dados da conta */
 void submenu_contactos()           /* Lista ONLINE/OFFLINE */
@@ -152,6 +159,7 @@ void submenu_seguranca()           /* Admin: logs/auditoria */
 ```
 
 ##### 8. **Função Main**
+
 ```c
 int main(int argc, char *argv[])
 /* Ponto de entrada:
@@ -168,6 +176,7 @@ int main(int argc, char *argv[])
 #### Secções Principais
 
 ##### 1. **Handlers de Comando**
+
 ```c
 void handle_auth()            /* AUTH username password */
 void handle_register()        /* REGISTER username password */
@@ -183,6 +192,7 @@ void handle_ban()             /* BAN username */
 ```
 
 ##### 2. **Multiplexing**
+
 ```c
 select(maxfd+1, &readfds, NULL, NULL, NULL)
 /* Monitorizar:
@@ -193,6 +203,7 @@ select(maxfd+1, &readfds, NULL, NULL, NULL)
 ```
 
 ##### 3. **Armazenamento**
+
 ```c
 usuarios_activos[MAX_CLIENTES]  /* Array de clientes conectados */
 channels_database[]             /* Canais pré-definidos */
@@ -205,6 +216,7 @@ channels_database[]             /* Canais pré-definidos */
 ### Especificação de Mensagens
 
 #### Formato Geral
+
 ```
 [COMANDO] [ARG1] [ARG2] ... [ARGN]
 ```
@@ -212,6 +224,7 @@ channels_database[]             /* Canais pré-definidos */
 #### Exemplos de Comunicação
 
 ##### LOGIN Bem-sucedido
+
 ```
 CLIENT: AUTH admin admin123
 SERVER: AUTH_SUCCESS:ADMIN
@@ -219,6 +232,7 @@ SERVER: AUTH_SUCCESS:ADMIN
 ```
 
 ##### LOGIN com Falha
+
 ```
 CLIENT: AUTH admin wrongpass
 SERVER: AUTH_FAIL
@@ -231,6 +245,7 @@ SERVER: AUTH_INACTIVE      /* Conta suspensa/banida */
 ```
 
 ##### BROADCAST em Canal
+
 ```
 CLIENT: BROADCAST #geral Olá pessoal!
 SERVER: BCAST_SENT
@@ -239,6 +254,7 @@ SERVER: BCAST_SENT
 ```
 
 ##### LIST_ALL (Multi-linha)
+
 ```
 CLIENT: LIST_ALL
 SERVER: === UTILIZADORES REGISTADOS ===
@@ -255,15 +271,17 @@ SERVER: === UTILIZADORES REGISTADOS ===
 
 ### Cliente
 
-#### draw_header(int modo, const char *subtitulo)
+#### draw_header(int modo, const char \*subtitulo)
 
 **Propósito:** Renderizar cabeçalho visual com logo ASCII
 
 **Parâmetros:**
+
 - `modo` — 0=GUEST, 1=USER, 2=ADMIN
 - `subtitulo` — Título adicional do ecrã
 
 **Comportamento:**
+
 ```
 system("clear")                    /* Limpar ecrã */
 printf("\033[1;31m")               /* Cor conforme modo */
@@ -273,6 +291,7 @@ printf("\033[0m")                  /* Reset cor */
 ```
 
 **Cores ANSI:**
+
 - GUEST: `\033[1;37m` (Branco)
 - USER: `\033[1;36m` (Ciano)
 - ADMIN: `\033[1;31m` (Vermelho)
@@ -284,15 +303,18 @@ printf("\033[0m")                  /* Reset cor */
 **Propósito:** Enviar comando bloqueante e aguardar resposta
 
 **Parâmetros:**
+
 - `cmd` — Comando a enviar (ex: "AUTH admin admin123")
 - `resp` — Buffer para resposta
 - `resp_sz` — Tamanho do buffer
 
-**Retorno:** 
+**Retorno:**
+
 - Número de bytes recebidos (>0 sucesso)
 - ≤0 em caso de erro
 
 **Implementação:**
+
 ```c
 send(server_fd, cmd, strlen(cmd), 0)     /* Enviar */
 recv(server_fd, resp, resp_sz-1, 0)      /* Receber */
@@ -306,6 +328,7 @@ resp[n] = '\0'                           /* Null-terminar */
 **Propósito:** Fluxo completo de autenticação interactivo
 
 **Passos:**
+
 ```
 1. Draw header GUEST
 2. Input: utilizador + password
@@ -320,6 +343,7 @@ resp[n] = '\0'                           /* Null-terminar */
 ```
 
 **Retorno:**
+
 - 1 — Login bem-sucedido
 - 0 — Cancelado ou falhou
 
@@ -330,6 +354,7 @@ resp[n] = '\0'                           /* Null-terminar */
 **Propósito:** Interface de chat em tempo real
 
 **Funcionalidade:**
+
 ```
 1. Mostrar lista de canais (#geral, #linux, #ajuda, personalizado)
 2. Utilizador escolhe canal
@@ -354,6 +379,7 @@ resp[n] = '\0'                           /* Null-terminar */
 **Propósito:** Enviar mensagem para todos no canal
 
 **Pseudocódigo:**
+
 ```c
 1. Extrair #canal e mensagem do comando
 2. Para cada cliente conectado:
@@ -369,6 +395,7 @@ resp[n] = '\0'                           /* Null-terminar */
 **Propósito:** Retornar lista de canais com utilizadores
 
 **Comportamento:**
+
 ```
 Para cada canal:
   - Contar utilizadores presentes
@@ -377,6 +404,7 @@ Para cada canal:
 ```
 
 **Exemplo de Resposta:**
+
 ```
 === CANAIS ACTIVOS ===
   #geral (2): admin, user1
@@ -471,11 +499,13 @@ END
 ### users.txt
 
 **Formato:**
+
 ```
 ID:Utilizador:Password:Função:Estado
 ```
 
 **Exemplo:**
+
 ```
 1:admin:admin123:ADMIN:ACTIVE
 2:user1:pass1:USER:ACTIVE
@@ -486,13 +516,13 @@ ID:Utilizador:Password:Função:Estado
 
 **Campos:**
 
-| Campo | Valores Possíveis | Descrição |
-|-------|-------------------|-----------|
-| ID | Inteiro único | Identificador de utilizador |
-| Utilizador | String | Nome de login (único) |
-| Password | String | Senha (plaintext Etapa 3; Etapa 4: hash) |
-| Função | USER, ADMIN | Nível de permissões |
-| Estado | ACTIVE, PENDING, INACTIVE, BANNED | Situação da conta |
+| Campo      | Valores Possíveis                 | Descrição                                |
+| ---------- | --------------------------------- | ---------------------------------------- |
+| ID         | Inteiro único                     | Identificador de utilizador              |
+| Utilizador | String                            | Nome de login (único)                    |
+| Password   | String                            | Senha (plaintext Etapa 3; Etapa 4: hash) |
+| Função     | USER, ADMIN                       | Nível de permissões                      |
+| Estado     | ACTIVE, PENDING, INACTIVE, BANNED | Situação da conta                        |
 
 ---
 
@@ -500,17 +530,18 @@ ID:Utilizador:Password:Função:Estado
 
 ### Erros Comuns e Resoluções
 
-| Erro | Causa Provável | Solução |
-|------|---|---|
-| "ERRO: Não conseguiu ligar-se ao servidor" | Servidor offline | `./server_linux` em Terminal 1 |
-| "ERRO: Não foi possível resolver 'hostname'" | DNS falha | Usar IP directo (127.0.0.1) |
-| "AUTH_FAIL" | Credenciais incorrectas | Verificar users.txt |
-| "Opção inválida" | Input fora do intervalo | Digitar número entre 0 e máximo |
-| "Buffer overflow" | Compilação sem -Wall -Wextra | Recompilar com flags |
+| Erro                                         | Causa Provável               | Solução                         |
+| -------------------------------------------- | ---------------------------- | ------------------------------- |
+| "ERRO: Não conseguiu ligar-se ao servidor"   | Servidor offline             | `./server_linux` em Terminal 1  |
+| "ERRO: Não foi possível resolver 'hostname'" | DNS falha                    | Usar IP directo (127.0.0.1)     |
+| "AUTH_FAIL"                                  | Credenciais incorrectas      | Verificar users.txt             |
+| "Opção inválida"                             | Input fora do intervalo      | Digitar número entre 0 e máximo |
+| "Buffer overflow"                            | Compilação sem -Wall -Wextra | Recompilar com flags            |
 
 ### Validações de Input
 
 **scanf() retorno:**
+
 ```c
 if (scanf("%49s", buffer) != 1) {
     clear_buffer();
@@ -519,6 +550,7 @@ if (scanf("%49s", buffer) != 1) {
 ```
 
 **Buffer limits:**
+
 ```c
 snprintf(buffer, sizeof(buffer), "%.50s", input);  /* Max 50 chars */
 ```
@@ -534,32 +566,39 @@ gcc -Wall -Wextra -o client_linux client_linux.c -lm
 ```
 
 **Verificar:**
+
 - Sem warnings (0 mencionados)
 - Sem erros (compilation bem-sucedida)
 
 ### Teste Funcional
 
 #### Teste 1: Login
+
 ```bash
 (echo "1"; echo "admin"; echo "admin123"; sleep 1; echo "0") | \
   ./client_linux 127.0.0.1 10000
 ```
+
 Esperado: Menu USER ou ADMIN apresentado
 
 #### Teste 2: List All
+
 ```bash
 (echo "1"; echo "admin"; echo "admin123"; sleep 1; echo "2"; \
   sleep 1; echo "0"; sleep 1; echo "0") | \
   ./client_linux 127.0.0.1 10000
 ```
+
 Esperado: Tabela de utilizadores com múltiplas linhas
 
 #### Teste 3: Chat
+
 ```bash
 (echo "1"; echo "admin"; echo "admin123"; sleep 1; echo "4"; \
   echo "1"; echo "test"; echo "/quit") | \
   ./client_linux 127.0.0.1 10000
 ```
+
 Esperado: Mensagem de broadcast enviada com sucesso
 
 ---
