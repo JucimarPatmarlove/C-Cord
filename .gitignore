@@ -1,22 +1,18 @@
-# Binários compilados
-client_linux
-server_linux
-client
-server
-
-# Ficheiros de log e temporários
-logs.txt
+# Runtime data files (não commitar)
 inbox.txt
+logs.txt
+users.txt
+
+# Executables
+server_linux
+client_linux
 *.o
-*.a
-*.so
 
-# Editor e sistema
+# IDE / Editor
 .vscode/
-.sixth/
-.DS_Store
+.idea/
 *.swp
-*~
+*.swo
 
-# Ficheiros de referência (não commitar)
-ETAPA3_FINAL.txt
+# System
+.DS_Store

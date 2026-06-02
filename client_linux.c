@@ -849,75 +849,20 @@ void submenu_mensagens(void) {
     }
 }
 
-/* ============================================================================
- * FUNÇÃO: submenu_canais()
- * Submenu para chat em tempo real em canais (broadcast).
- *
- * ESTE É O SUBMENU MAIS COMPLEXO E IMPORTANTE:
- * • Usa select() para escuta dupla (stdin + servidor)
- * • Permite chat multi-utilizador em tempo real
- * • Implementa ligação persistente (Etapa 3 key feature)
- *
- * FLUXO PARTE 1: SELEÇÃO DE CANAL
- *   1. Draw header com modo apropriado
- *   2. Listar canais pré-definidos:
- *      [1] #geral   - Conversa livre
- *      [2] #linux   - Técnico
- *      [3] #ajuda   - Admin
- *      [4] Personalizado (input do utilizador)
- *   3. Mostrar canal_atual: \033[1;33m...\033[0m (amarelo)
- *   4. Input: número do canal
- *   5. Switch/case para determinar nome_canal
- *      • Casos 1-3: strcpy() para nomes pré-definidos
- *      • Caso 4: scanf() para nome personalizado
- *        → if (nome_canal[0] != '#') adiciona # prefix
- *        → snprintf(tmp, sizeof(tmp), "#%.48s", nome_canal)
- *           Garante "#" + até 48 caracteres = 49 máx
- *   6. Enviar: "JOIN #canal" ao servidor
- *   7. Se "JOIN_OK", prosseguir; senão retry
- *
- * FLUXO PARTE 2: CHAT EM TEMPO REAL (O LOOP CRÍTICO)
- *   while (1):
- *   1. Prompt: "[username] Sua mensagem: "
- *   2. INPUT DO UTILIZADOR (fgets para multi-linhas):
- *      • fgets(msg, sizeof(msg), stdin) — lê até 399 bytes + '\n'
- *      • msg[strcspn(msg, "\n")] = '\0' — remove '\n'
- *   3. VERIFICAR COMANDO ESPECIAL:
- *      if (strcmp(msg, "/quit") == 0):
- *      → Enviar: "LEAVE"
- *      → Sair do loop while(1)
- *      → Voltar ao menu de canais
- *   4. SENÃO, BROADCAST:
- *      snprintf(cmd, sizeof(cmd), "BROADCAST #%s %s", canal, msg)
- *      → Constrói comando TCP
- *   5. DUPLA ESCUTA COM SELECT():
- *      fd_set readfds;
- *      FD_ZERO(&readfds);
- *      FD_SET(STDIN_FILENO, &readfds);    ← Escuta teclado
- *      FD_SET(server_fd, &readfds);       ← Escuta servidor
- *      select(maxfd+1, &readfds, ..., NULL)
- *      • select() bloqueia até haver dados em stdin OU socket
- *      • Permite receber mensagens de outros utilizadores durante digitação
- *      • Manda resposta para STDOUT sem interromper prompt
- *   6. RECEBER BROADCAST (se datos no server_fd):
- *      recv(server_fd, ...) — recebe broadcasts do servidor
- *      imprimir_resposta(...) — mostra com cores
- *      Volta ao prompt (não perde contexto)
- *
- * MODO ADAPTATIVO:
- *   int modo = is_admin_flag ? 2 : 1
- *   • Colors diferentes conforme ADMIN vs USER
- *
- * VALIDAÇÃO:
- *   • strcmp(msg, "/quit") — exatamente "/quit" (não "/QUIT" etc)
- *   • strcpy() com validação de tamanho
- *   • snprintf() com limits para evitar overflow
- *
- * ESTADO ALTERADO:
- *   • current_canal — muda para novo canal
- *
- * RETORNO: Nenhum (void) — volta ao menu_canais
- * ============================================================================
+/**
+ * @brief Inicia a Interface (TUI) de interatividade de Canais e Chat Real-Time.
+ * 
+ * @details 
+ * Função pináculo da componente cliente, responsável pelo conceito de "Dupla Escuta".
+ * É aqui que superamos a barreira imposta pelo comportamento bloqueante normal de POSIX.
+ * Um terminal comum bloqueia ao pedir input do utilizador. Com o `select()`, o terminal 
+ * pode permanecer receptivo à escrita de rede e renderizar output de terceiros ENQUANTO
+ * o próprio utilizador escreve as suas respostas, garantindo uma fluidez moderna.
+ * 
+ * @note
+ * As mensagens recebidas invocam códigos de escape ANSI (`\r\033[K`) para limpar
+ * liminarmente a linha onde o utilizador está a escrever, depositar a mensagem e
+ * reimprimir o "prompt", resolvendo as habituais "Colisões Visuais" no ecrã.
  */
 void submenu_canais(void) {
     int sair = 0;
@@ -992,9 +937,9 @@ void submenu_canais(void) {
 
             while (1) {
                 /* ================================================
-                 * LOOP DE CHAT COM select() — DUPLA ESCUTA (BUG 3 CORRIGIDO)
-                 * stdin: input do utilizador
-                 * server_fd: broadcasts de outros utilizadores
+                 * ARQUITETURA DA DUPLA ESCUTA: O CORAÇÃO DO CHAT.
+                 * Em vez de fazer scanf() / fgets() imediatos (que travariam o fluxo),
+                 * usamos select para monotorizar I/O local e remoto em paralelo.
                  * ================================================
                  */
                 printf("\n [%s] Sua mensagem: ", current_user);
@@ -1002,15 +947,23 @@ void submenu_canais(void) {
 
                 fd_set readfds;
                 FD_ZERO(&readfds);
+                
+                /* STDIN_FILENO = file descriptor (0). Capta as teclas do utilzador. */
                 FD_SET(STDIN_FILENO, &readfds);
+                
+                /* server_fd = socket TCP. Capta Broadcasts reencaminhados do Servidor. */
                 FD_SET(server_fd, &readfds);
                 int maxfd = server_fd + 1;
 
-                /* select() bloqueia até haver actividade em stdin OU socket */
+                /* Como não fornecemos timeout estruturado aqui, bloqueamos até ao
+                 * infinito (NULL) por uma das 2 fontes libertar atividade. */
                 int activity = select(maxfd, &readfds, NULL, NULL, NULL);
                 if (activity < 0) break;
 
-                /* ===== MENSAGEM CHEGOU DO SERVIDOR (broadcast de outro user) ===== */
+                /* 
+                 * CENÁRIO A: Alguém enviou mensagem!
+                 * Se fd_isset dá true para o TCP, temos bytes a ler da rede.
+                 */
                 if (FD_ISSET(server_fd, &readfds)) {
                     char incoming[BUF_SIZE];
                     int n = recv(server_fd, incoming, BUF_SIZE - 1, 0);
@@ -1019,16 +972,22 @@ void submenu_canais(void) {
                         break;
                     }
                     incoming[n] = '\0';
-                    /* Apagar a linha do prompt antes de imprimir */
+                    
+                    /* Carriage return '\r' retorna o cursor ao ínicio da linha,
+                     * e '\033[K' apaga todo o texto dessa mesma linha. */
                     printf("\r\033[K");
                     imprimir_resposta(incoming);
-                    /* Reimprime o prompt */
+                    
+                    /* Reimprime o prompt para o utilizador poder voltar a digitar. */
                     printf(" [%s] Sua mensagem: ", current_user);
                     fflush(stdout);
                     continue;
                 }
 
-                /* ===== UTILIZADOR ESCREVEU ALGO ===== */
+                /*
+                 * CENÁRIO B: Utilizador premiu o ENTER (STDIN).
+                 * Seguros de ler via fgets sabendo que o sistema operativo tem bytes na frame.
+                 */
                 if (FD_ISSET(STDIN_FILENO, &readfds)) {
                     char input[400];
                     if (!fgets(input, sizeof(input), stdin)) break;
@@ -1589,108 +1548,19 @@ void menu_admin(void) {
     }
 }
 
-/* ============================================================================
- * FUNÇÃO: main(int argc, char* argv[])
- * Ponto de entrada da aplicação. Responsável por:
- *   1. Validar argumentos CLI (IP do servidor, porto)
- *   2. Resolver hostname (se necessário)
- *   3. Criar socket TCP
- *   4. Conectar ao servidor
- *   5. Controlar fluxo de menus
- *   6. Cleanup e encerramento
- *
- * ARGUMENTO CLI:
- *   ./client_linux <IP_SERVIDOR> <PORTO>
- *   Exemplo: ./client_linux 127.0.0.1 10000
- *            ./client_linux localhost 10000
- *
- * FLUXO PASSO-A-PASSO:
- *
- *   1. VALIDAÇÃO DE ARGUMENTOS
- *      if (argc != 3) → Erro se não tem exatamente 2 argumentos
- *      fprintf(stderr, "Uso: ...") → Mensagem de ajuda
- *      server_ip = argv[1]
- *      server_port = atoi(argv[2]) — converte string para int
- *
- *   2. DNS RESOLUTION (gethostbyname)
- *      struct hostent* he = gethostbyname(server_ip)
- *      • Aceita IP directo: "127.0.0.1" → sem DNS lookup
- *      • Ou hostname: "localhost" → faz DNS resolver
- *      • Retorna: ponteiro para hostent com informações
- *      • Se falha: he==NULL → erro, exit
- *      • NOTA: gethostbyname() é deprecated (preferir getaddrinfo)
- *              mas é aceitável para projeto educacional
- *
- *   3. CONSTRUIR ENDEREÇO DO SERVIDOR
- *      struct sockaddr_in server_addr
- *      • memset(&server_addr, 0, ...) — limpar estrutura
- *      • sin_family = AF_INET — IPv4
- *      • sin_port = htons(server_port) — converter endianness
- *      • memcpy(&sin_addr, he->h_addr, he->h_length) — copiar IP resolvido
- *
- *   4. CRIAR SOCKET TCP
- *      server_fd = socket(AF_INET, SOCK_STREAM, 0)
- *      • AF_INET — IPv4
- *      • SOCK_STREAM — TCP (não UDP)
- *      • 0 — protocolo padrão (IPPROTO_TCP)
- *      • server_fd < 0 → erro, exit
- *      • server_fd guardado em variável global (usado por menus)
- *
- *   5. CONECTAR AO SERVIDOR (BLOQUEANTE)
- *      connect(server_fd, (struct sockaddr*)&server_addr, ...)
- *      • Bloqueia até servidor aceitar conexão ou timeout
- *      • Se < 0 → conexão falhou (servidor offline?)
- *      • close(server_fd) + exit
- *      • NOTA: Esta é uma LIGAÇÃO PERSISTENTE (Etapa 3)
- *              Socket fica aberto durante toda a sessão
- *              (ao contrário de Etapa 2: close após cada comando)
- *
- *   6. MENU DE BOAS-VINDAS
- *      draw_header(0, "CONECTADO...") — modo GUEST
- *      Mostra: "Bem-vindo ao C-Cord v3.0!"
- *      Mostra: "Servidor: IP:PORTO"
- *      getchar() — aguarda ENTER
- *
- *   7. FLUXO DE AUTENTICAÇÃO
- *      menu_pre_login()
- *      • Loop até utilizador fazer login com sucesso
- *      • Dentro: opções para login ([1]) ou registo ([2])
- *      • Quando login bem-sucedido:
- *        - fluxo_login() retorna 1
- *        - is_admin_flag setado (0=USER, 1=ADMIN)
- *        - autenticado setado a 1
- *      • Sai do menu_pre_login() para prosseguir
- *
- *   8. DISPATCH PARA MENU APROPRIADO
- *      if (is_admin_flag)
- *          menu_admin() — 8 opções + logout
- *      else
- *          menu_user() — 5 opções + logout
- *      • Loop até utilizador fazer logout ([0])
- *      • Quando logout: sair=1, autenticado=0
- *      • Menu termina, volta aqui (mas não recicla, vai a cleanup)
- *
- *   9. CLEANUP E ENCERRAMENTO
- *      close(server_fd) — fecha socket TCP
- *      Mensagem de despedida: "OBRIGADO POR USAR C-CORD v3.0"
- *      return 0 — saída bem-sucedida
- *
- * ESTADO GLOBAL ALTERADO:
- *   • server_fd — inicializado com socket conectado
- *   • current_user — setado em fluxo_login()
- *   • is_admin_flag — setado em fluxo_login()
- *   • autenticado — setado em fluxo_login()
- *   • login_time — setado em fluxo_login()
- *   • current_canal — inicializado a "#geral"
- *
- * RETORNO:
- *   0 — Encerramento normal
- *   1 — Erro (argumentos, DNS, socket, conexão)
- *
- * ESTRUTURAS UTILIZADAS:
- *   struct hostent — Resultado de DNS (gethostbyname)
- *   struct sockaddr_in — Endereço IPv4 para TCP
- * ============================================================================
+/**
+ * @brief Bootstrapping e Função Principal do Cliente TCP Persistente.
+ * 
+ * @details 
+ * Trata da receção de argumentos por linha de comandos (CLI), realiza o DNS Lookup
+ * para o destino fornecido, e instaura a Conexão TCP Ativa e Efetiva (`connect`).
+ * Ao contrário das etapas anteriores, esta rotina engloba um ciclo de vida longo. O
+ * `server_fd` (socket) mantém a porta efemeramente alocada por horas, até ocorrer encerramento.
+ * 
+ * @param argc Obrigatório ter 3 argumentos absolutos (nome_do_programa + ip + porta)
+ * @param argv Parâmetros posicinais do invocador em Array de Strings C.
+ * 
+ * @return int 0 para desativação normal da aplicação, != 0 para Crash Network-related.
  */
 int main(int argc, char* argv[]) {
     if (argc != 3) {

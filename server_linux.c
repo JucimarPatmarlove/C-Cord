@@ -1072,11 +1072,16 @@ int main() {
         struct timeval tv;      /* Timeout */
         int max_fd = server_fd; /* Começar com socket do servidor */
 
-        /* ===== PREPARAR FD_SET PARA SELECT ===== */
-        FD_ZERO(&readfds);           /* Limpar o conjunto */
-        FD_SET(server_fd, &readfds); /* Adicionar socket listening */
+        /* Inicializa a Bitmap List de descritores de ficheiro a zeros */
+        FD_ZERO(&readfds);           
+        
+        /* Adiciona o Master Socket (para vigiar por novas conexões / SYNs) */
+        FD_SET(server_fd, &readfds); 
 
-        /* Adicionar todos os clientes ativos (fd > 0) */
+        /* 
+         * Iteramos sob o estado guardado para adicionar todos os clientes previamente
+         * autenticados ou em sessão no array FD_SET, para monitorizar por eventos.
+         */
         for (int i = 0; i < MAX_CLIENTES; i++) {
             if (clientes[i].fd > 0) {
                 FD_SET(clientes[i].fd, &readfds);
@@ -1084,11 +1089,12 @@ int main() {
             }
         }
 
-        /* ===== SELECT COM TIMEOUT DE 1 SEGUNDO ===== */
-        /* select() fica à espera até:
-         * - Dados disponíveis em qualquer socket (retorna count > 0)
-         * - Timeout expira (retorna 0)
-         * - Erro (retorna -1)
+        /* 
+         * O SELECT() BLOQUEANTE MAS MULTIPLEXADO:
+         * O servidor adormece nesta instrução a nível do Kernel. Só acorda se:
+         * a) Passar 1 segundo rigorosamente (tv_sec = 1).
+         * b) Um evento ocorrer nos descritores registados no array &readfds.
+         * O primeiro argumento deve ser SEMPRE o (Descritor Mais Alto Registado + 1).
          */
         tv.tv_sec = 1;
         tv.tv_usec = 0;
@@ -1099,8 +1105,11 @@ int main() {
             continue;
         }
 
-        /* ===== VERIFICAR SE HÁ NOVO CLIENTE ===== */
-        /* Se server_fd (socket listening) tem atividade = nova conexão */
+        /* 
+         * VERIFICAÇÃO MASTER SOCKET: 
+         * Se o FD_ISSET retornar verdadeiro para o `server_fd`, isso significa matematicamente
+         * que um cliente enviou um TCP SYN packet. Chamamos accept() não bloqueante neste cenário.
+         */
         if (FD_ISSET(server_fd, &readfds)) {
             int client_fd =
                 accept(server_fd, (struct sockaddr*)&cli_addr, &addr_size);
@@ -1133,23 +1142,26 @@ int main() {
             }
         }
 
-        /* ===== VERIFICAR CLIENTES EXISTENTES COM DADOS ===== */
-        /* Para cada slot no array... */
+        /* 
+         * VERIFICAÇÃO CLIENT SOCKETS:
+         * Iteramos pelas nossas ligações persistentes. Se FD_ISSET der MATCH num dos sockets
+         * dos clientes, significa que dados PSH, PSH+ACK, ou FIN chegaram do lado deles.
+         */
         for (int i = 0; i < MAX_CLIENTES; i++) {
             /* Se slot tem cliente ativo (fd > 0) E tem dados prontos (FD_ISSET)
              */
             if (clientes[i].fd > 0 && FD_ISSET(clientes[i].fd, &readfds)) {
                 char buffer[BUF_SIZE] = "";
 
-                /* ===== RECEBER DADOS DO CLIENTE ===== */
-                /* recv() bloqueia normalmente, mas aqui só é chamado após
-                 * select() confirmar que há dados → retorna imediatamente */
+                /* Como sabemos via select() que o Kernel tem os dados no buffer, recv() aqui
+                 * não bloqueia a execução - extrai imediato para a memória de aplicação.
+                 * NOTA DA AUDITORIA: Este local contém um risco ativo de Buffer Overflow! */
                 int n = recv(clientes[i].fd, buffer, BUF_SIZE - 1, 0);
 
                 if (n <= 0) {
-                    /* ===== DESCONEXÃO ===== */
-                    /* recv() retorna 0 = desconexão graciosamente
-                     * recv() retorna -1 = erro (ex: conexão reset)
+                    /* Se n <= 0, significa que o peer remoto fechou a sessão de forma 
+                     * natural (0 bytes - FIN packet) ou com erro (-1 RST packet).
+                     * Lógica da Persistência de Estado: Liberta o array e limpa campos! 
                      */
                     printf(
                         " \033[1;36m[INFO]\033[0m  | Cliente desconectado "
