@@ -1,8 +1,8 @@
 # C-CORD — Simplified Discord Clone in C
 
-**Versão:** 3.0 (Etapa 3 — Select + TUI + Menus)  
-**Status:** ✅ Production Ready  
-**Linguagem:** Português Europeu (pt_PT)
+**Versão:** 3.0 (Etapa 3 — Select + TUI + Canais)  
+**Status:** ✅ Etapa 3 Completa  
+**Data:** 2026-06-02
 
 ---
 
@@ -25,8 +25,8 @@
 ### Compilação
 
 ```bash
-gcc -Wall -Wextra -o server_linux server_linux.c -lm
-gcc -Wall -Wextra -o client_linux client_linux.c -lm
+gcc -Wall -Wextra -o server_linux server_linux.c
+gcc -Wall -Wextra -o client_linux client_linux.c
 ```
 
 **Resultado:** 0 warnings, 0 errors ✅
@@ -133,8 +133,8 @@ CLIENT (1,704 linhas)           SERVER (1,346 linhas)
 ├── users.txt              — Base de dados (ID:User:Pass:Role:State)
 ├── README.md              — Este ficheiro
 ├── DOCUMENTACAO.md        — Guia técnico detalhado
-├── RESUMO_ETAPA3.md       — Overview Etapa 3
-└── teste_rapido_etapa3.sh — Validação rápida
+├── EVOLUCAO_ARQUITETURA.md — Overview técnico Etapa 3
+└── TESTES.md              — Guia de testes completo
 ```
 
 ---
@@ -211,4 +211,4 @@ Testa registo, login, comandos de lista, multi-line parsing.
 
 ---
 
-**Versão:** 3.0 | **Data:** 2026-05-26 | **Status:** ✅ Production Ready
+**Versão:** 3.0 | **Data:** 2026-06-02 | **Status:** ✅ Etapa 3 Completa

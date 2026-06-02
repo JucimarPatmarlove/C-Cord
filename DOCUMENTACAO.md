@@ -1,7 +1,7 @@
 # C-CORD v3.0 — Documentação Técnica Completa
 
 **Versão:** 3.0 (Etapa 3)  
-**Data:** 2026-05-25  
+**Data:** 2026-06-02  
 **Linguagem:** Português Europeu (pt_PT)
 
 ---

@@ -1154,8 +1154,7 @@ int main() {
                 char buffer[BUF_SIZE] = "";
 
                 /* Como sabemos via select() que o Kernel tem os dados no buffer, recv() aqui
-                 * não bloqueia a execução - extrai imediato para a memória de aplicação.
-                 * NOTA DA AUDITORIA: Este local contém um risco ativo de Buffer Overflow! */
+                 * não bloqueia a execução - extrai imediato para a memória de aplicação. */
                 int n = recv(clientes[i].fd, buffer, BUF_SIZE - 1, 0);
 
                 if (n <= 0) {
