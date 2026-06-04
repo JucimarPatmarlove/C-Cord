@@ -1583,7 +1583,7 @@ int main(int argc, char* argv[]) {
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(server_port);
-    memcpy(&server_addr.sin_addr, he->h_addr, he->h_length);
+    memcpy(&server_addr.sin_addr, he->h_addr_list[0], he->h_length);
 
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0) {
