@@ -34,11 +34,13 @@ gcc -Wall -Wextra -o client_linux client_linux.c
 ### Execução
 
 **Terminal 1 — Servidor:**
+
 ```bash
 ./server_linux
 ```
 
 **Terminal 2 — Cliente:**
+
 ```bash
 ./client_linux 127.0.0.1 10000
 ```
@@ -47,11 +49,11 @@ gcc -Wall -Wextra -o client_linux client_linux.c
 
 ## 🎮 Utilizadores de Teste
 
-| Utilizador | Password  | Função  |
-|-----------|-----------|--------|
-| admin     | admin123  | ADMIN  |
-| user1     | pass1     | USER   |
-| user2     | pass2     | USER   |
+| Utilizador | Password | Função |
+| ---------- | -------- | ------ |
+| admin      | admin123 | ADMIN  |
+| user1      | pass1    | USER   |
+| user2      | pass2    | USER   |
 
 ---
 
@@ -60,6 +62,7 @@ gcc -Wall -Wextra -o client_linux client_linux.c
 ### 3 Modos Visuais
 
 **GUEST** (Branco) — Pré-login
+
 ```
 BEM-VINDO AO C-CORD (v3.0)
 [ 1 ] Iniciar Sessão
@@ -68,6 +71,7 @@ BEM-VINDO AO C-CORD (v3.0)
 ```
 
 **USER** (Ciano) — Utilizador Normal (5 opções)
+
 ```
 [~] MODO UTILIZADOR NORMAL
 [ 1 ] O Meu Perfil
@@ -79,6 +83,7 @@ BEM-VINDO AO C-CORD (v3.0)
 ```
 
 **ADMIN** (Vermelho) — Administrador (8 opções)
+
 ```
 [!] MODO ADMINISTRADOR ATIVO
 [ 1-4 ] Como USER
@@ -110,17 +115,17 @@ CLIENT (1,704 linhas)           SERVER (1,346 linhas)
 
 ## 🔌 Protocolo TCP
 
-| Comando | Exemplo | Resposta |
-|---------|---------|----------|
-| AUTH | `AUTH admin admin123` | `AUTH_SUCCESS:ADMIN` |
-| REGISTER | `REGISTER user pass` | `REGISTER_OK` |
-| JOIN | `JOIN #geral` | `JOIN_OK` |
-| BROADCAST | `BROADCAST #geral ola` | `BCAST_SENT` |
-| LEAVE | `LEAVE` | `LEAVE_OK` |
-| SEND_MSG | `SEND_MSG user msg` | `MSG_SENT` |
-| LIST_ALL | `LIST_ALL` | Tabela utilizadores |
-| LIST_CHANNELS | `LIST_CHANNELS` | Canais + ocupância |
-| GET_INFO | `GET_INFO` | Info servidor |
+| Comando       | Exemplo                | Resposta             |
+| ------------- | ---------------------- | -------------------- |
+| AUTH          | `AUTH admin admin123`  | `AUTH_SUCCESS:ADMIN` |
+| REGISTER      | `REGISTER user pass`   | `REGISTER_OK`        |
+| JOIN          | `JOIN #geral`          | `JOIN_OK`            |
+| BROADCAST     | `BROADCAST #geral ola` | `BCAST_SENT`         |
+| LEAVE         | `LEAVE`                | `LEAVE_OK`           |
+| SEND_MSG      | `SEND_MSG user msg`    | `MSG_SENT`           |
+| LIST_ALL      | `LIST_ALL`             | Tabela utilizadores  |
+| LIST_CHANNELS | `LIST_CHANNELS`        | Canais + ocupância   |
+| GET_INFO      | `GET_INFO`             | Info servidor        |
 
 ---
 
@@ -141,42 +146,46 @@ CLIENT (1,704 linhas)           SERVER (1,346 linhas)
 
 ## ✅ Qualidade de Código
 
-| Métrica | Valor |
-|---------|-------|
-| Linhas de código (Cliente) | 1,704 |
-| Linhas de código (Servidor) | 1,346 |
-| **Total** | **3,050** |
-| Funções principais | 24 |
-| Linhas de comentários | 646+ |
-| Compilação | 0 warnings ✅ |
-| Testes | 8/8 passing ✅ |
-| Documentação | 100% pt_PT ✅ |
+| Métrica                     | Valor          |
+| --------------------------- | -------------- |
+| Linhas de código (Cliente)  | 1,704          |
+| Linhas de código (Servidor) | 1,346          |
+| **Total**                   | **3,050**      |
+| Funções principais          | 24             |
+| Linhas de comentários       | 646+           |
+| Compilação                  | 0 warnings ✅  |
+| Testes                      | 8/8 passing ✅ |
+| Documentação                | 100% pt_PT ✅  |
 
 ---
 
 ## 🧪 Testes
 
 ### Teste Rápido
+
 ```bash
 ./teste_rapido_etapa3.sh
 ```
+
 Verifica compilação, binários, estrutura de código.
 
 ### Teste Funcional
+
 ```bash
 ./teste_etapa3.sh
 ```
+
 Testa registo, login, comandos de lista, multi-line parsing.
 
 ---
 
 ## 📚 Documentação
 
-| Ficheiro | Objetivo |
-|----------|----------|
-| **DOCUMENTACAO.md** | Guia técnico + arquitetura + protocolo |
-| **RESUMO_ETAPA3.md** | Resumo mockups + menus + roadmap |
-| **README.md** | Setup + quick start (ESTE FICHEIRO) |
+| Ficheiro             | Objetivo                               |
+| -------------------- | -------------------------------------- |
+| **DOCUMENTACAO.md**  | Guia técnico + arquitetura + protocolo |
+| **RESUMO_ETAPA3.md** | Resumo mockups + menus + roadmap       |
+| **README.md**        | Setup + quick start (ESTE FICHEIRO)    |
 
 ---
 
@@ -193,12 +202,12 @@ Testa registo, login, comandos de lista, multi-line parsing.
 
 ## 🔄 Roadmap
 
-| Etapa | Status | Funcionalidade |
-|-------|--------|---|
-| 1 | ✅ | Cliente TCP + AUTH + GET_INFO |
-| 2 | ✅ | Canais + JOIN/LEAVE/BROADCAST + Mensagens |
-| 3 | ✅ | TUI + Menus + Chat tempo real (select) |
-| 4 | 📋 | SQLite + 2FA + TLS + Histórico |
+| Etapa | Status | Funcionalidade                            |
+| ----- | ------ | ----------------------------------------- |
+| 1     | ✅     | Cliente TCP + AUTH + GET_INFO             |
+| 2     | ✅     | Canais + JOIN/LEAVE/BROADCAST + Mensagens |
+| 3     | ✅     | TUI + Menus + Chat tempo real (select)    |
+| 4     | 📋     | SQLite + 2FA + TLS + Histórico            |
 
 ---
 
