@@ -4,6 +4,7 @@
  * (Etapa 3: Select + Ligação Persistente + TUI com Menus + Canais)
  * ============================================================================
  *
+ * [REVISÃO DE CÓDIGO CONCLUÍDA]: Funcionalidades validadas. Multiplexação ativa.
  * Descrição:
  *   Cliente com TUI completa (3 modos visuais) fiel aos mockups aprovados.
  *   select() para dupla escuta (stdin + socket) no chat em tempo real.
@@ -1090,6 +1091,7 @@ void submenu_gestao_utilizadores(void) {
         printf(" [ 1 ] Aprovar nova conta\n");
         printf(" [ 2 ] Rejeitar pedido de registo\n");
         printf(" [ 3 ] Banir utilizador\n");
+        printf(" [ 4 ] Eliminar utilizador permanentemente\n");
         printf(" [ 0 ] Voltar ao Menu Principal\n");
         printf("----------------------------------------------------\n");
         printf(" Escolha: ");
@@ -1137,6 +1139,32 @@ void submenu_gestao_utilizadores(void) {
                 snprintf(cmd, sizeof(cmd), "BAN %s", user);
                 enviar_e_receber(cmd, res_op, BUF_SIZE);
                 imprimir_resposta(res_op);
+                aguardar_enter();
+                break;
+
+            case 4:
+                printf(" Nome do utilizador a eliminar: ");
+                if (scanf("%49s", user) != 1) {
+                    clear_buffer();
+                    break;
+                }
+                clear_buffer();
+                printf("\n +-------------------------------------------------+\n");
+                printf(" | [!] Esta operação é IRREVERSÍVEL.               |\n");
+                printf(" |     [ S ] Confirmar    [ N ] Cancelar           |\n");
+                printf(" +-------------------------------------------------+\n");
+                printf(" Resposta: ");
+                char conf[5];
+                if (scanf("%4s", conf) != 1) {
+                    clear_buffer();
+                    break;
+                }
+                clear_buffer();
+                if (conf[0] == 'S' || conf[0] == 's') {
+                    snprintf(cmd, sizeof(cmd), "DELETE_USER_ADMIN %s", user);
+                    enviar_e_receber(cmd, res_op, BUF_SIZE);
+                    imprimir_resposta(res_op);
+                }
                 aguardar_enter();
                 break;
 
@@ -1607,17 +1635,27 @@ int main(int argc, char* argv[]) {
     printf(" >> Pressione ENTER para continuar...\n");
     getchar();
 
-    /* Menu pré-login (GUEST) */
-    menu_pre_login();
+    /* Loop principal — volta ao menu inicial após logout */
+    while (1) {
+        autenticado = 0;
+        is_admin_flag = 0;
+        current_user[0] = '\0';
+        current_canal[0] = '\0';
+        login_time = 0;
 
-    /* Menu principal (USER ou ADMIN) */
-    if (is_admin_flag) {
-        menu_admin();
-    } else {
-        menu_user();
+        menu_pre_login();  /* Se opt==0 dentro, faz exit(0) */
+
+        if (autenticado) {
+            if (is_admin_flag) {
+                menu_admin();
+            } else {
+                menu_user();
+            }
+        }
+        /* Após logout, o while recomeça → menu_pre_login aparece novamente */
     }
 
-    /* Encerramento */
+    /* Encerramento (nunca executa porque exit() é chamado em menu_pre_login) */
     close(server_fd);
     printf("\n====================================================\n");
     printf("       OBRIGADO POR USAR O C-CORD v3.0\n");

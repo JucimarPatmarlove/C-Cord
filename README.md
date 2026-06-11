@@ -2,7 +2,7 @@
 
 **Versão:** 3.0 (Etapa 3 — Select + TUI + Canais)  
 **Status:** ✅ Etapa 3 Completa  
-**Data:** 2026-06-02
+**Data:** Atualizado
 
 ---
 
@@ -138,6 +138,7 @@ CLIENT (1,704 linhas)           SERVER (1,346 linhas)
 ├── users.txt              — Base de dados (ID:User:Pass:Role:State)
 ├── README.md              — Este ficheiro
 ├── DOCUMENTACAO.md        — Guia técnico detalhado
+├── ETAPA3_EXPLICACAO.md   — Explicação detalhada do código da Etapa 3 (NOVO)
 ├── EVOLUCAO_ARQUITETURA.md — Overview técnico Etapa 3
 └── TESTES.md              — Guia de testes completo
 ```

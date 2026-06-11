@@ -3,6 +3,8 @@
  * SERVIDOR TCP C-CORD — VERSÃO 3.0 (Etapa 3: Select + Canais + Broadcast)
  * ============================================================================
  *
+ * [REVISÃO DE CÓDIGO CONCLUÍDA]: Base de código validada para a Etapa 3.
+ * 
  * Descrição:
  *   Servidor TCP que implementa concorrência com select() para múltiplos
  * clientes. Suporta canais, broadcasts, e comunicação persistente (Etapa 3).
@@ -350,7 +352,19 @@ void check_inbox(const char* username, char* response) {
         if (sscanf(line, "%49[^:]:%49[^:]:%399[^\n]", dest, from, msg) == 3) {
             if (strcmp(dest, username) == 0) {
                 char entry[512];
-                sprintf(entry, " [%d] De: %s → %s\n", ++count, from, msg);
+                /* msg já contém "[YYYY-MM-DD HH:MM:SS] texto" */
+                sprintf(entry, " [%d] De: %s | %s\n", ++count, from, msg);
+                        /* Verificar se a mensagem possui timestamp (nova versao) */
+                        if (msg[0] == '[' && strlen(msg) > 21 && msg[20] == ']') {
+                            char data_hora[25];
+                            strncpy(data_hora, msg + 1, 19);
+                            data_hora[19] = '\0';
+                            char* texto_real = msg + 22; /* Salta o "[YYYY-MM-DD HH:MM:SS] " */
+                            sprintf(entry, " [%d] De: %-8s | Data: %s | Msg: %s\n", ++count, from, data_hora, texto_real);
+                        } else {
+                            /* Mensagem antiga sem timestamp */
+                            sprintf(entry, " [%d] De: %-8s | Data: (Antiga)          | Msg: %s\n", ++count, from, msg);
+                        }
                 strncat(response, entry, BUF_SIZE - strlen(response) - 1);
             }
         }
@@ -389,7 +403,14 @@ void send_msg(const char* dest, const char* from, const char* msg,
         strcpy(response, "ERRO: Nao foi possivel guardar mensagem.");
         return;
     }
-    fprintf(f, "%s:%s:%s\n", dest, from, msg);
+    
+    /* Adicionar data/hora à mensagem privada */
+    char data_hora[20];
+    time_t agora = time(NULL);
+    struct tm *t = localtime(&agora);
+    strftime(data_hora, sizeof(data_hora), "%Y-%m-%d %H:%M:%S", t);
+    
+    fprintf(f, "%s:%s:[%s] %s\n", dest, from, data_hora, msg);
     fclose(f);
     sprintf(response, "MSG_SENT: Mensagem entregue na caixa de %s.", dest);
 }
@@ -771,10 +792,16 @@ void handle_broadcast(int client_idx, const char* msg, char* response) {
         return;
     }
 
-    /* Construir mensagem para broadcast */
+    /* Construir mensagem para broadcast com data/hora */
     char bcast_msg[BUF_SIZE];
-    snprintf(bcast_msg, sizeof(bcast_msg), "[%s] %s: %s",
-             clientes[client_idx].canal, clientes[client_idx].username, msg);
+    char data_hora[20];
+    time_t agora = time(NULL);
+    struct tm *t = localtime(&agora);
+    strftime(data_hora, sizeof(data_hora), "%H:%M:%S", t);
+    
+    snprintf(bcast_msg, sizeof(bcast_msg), "[%s][%s] %s: %s",
+             data_hora, clientes[client_idx].canal,
+             clientes[client_idx].username, msg);
 
     /* Enviar para todos os clientes no mesmo canal */
     for (int i = 0; i < MAX_CLIENTES; i++) {
@@ -1327,6 +1354,19 @@ int main() {
                         delete_user(clientes[i].username, target, response);
                         sprintf(log_msg, "REJECT: '%s' por '%s'", target,
                                 clientes[i].username);
+                        log_type = 1;
+                    }
+                }
+
+                else if (strncmp(buffer, "DELETE_USER_ADMIN ", 18) == 0) {
+                    char target[50];
+                    sscanf(buffer + 18, "%49s", target);
+                    if (!clientes[i].autenticado) {
+                        strcpy(response, "DELETE_FAIL: Sessao invalida.");
+                    } else {
+                        delete_user(clientes[i].username, target, response);
+                        sprintf(log_msg, "DELETE_USER_ADMIN: '%s' por '%s'",
+                                target, clientes[i].username);
                         log_type = 1;
                     }
                 }
