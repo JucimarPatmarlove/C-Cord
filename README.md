@@ -139,6 +139,7 @@ CLIENT (1,704 linhas)           SERVER (1,346 linhas)
 ├── README.md              — Este ficheiro
 ├── DOCUMENTACAO.md        — Guia técnico detalhado
 ├── ETAPA3_EXPLICACAO.md   — Explicação detalhada do código da Etapa 3 (NOVO)
+├── PLANO_RISCOS_TESTES_ETAPA3_FINAL.md — Plano de Riscos e Matriz de Testes
 ├── EVOLUCAO_ARQUITETURA.md — Overview técnico Etapa 3
 └── TESTES.md              — Guia de testes completo
 ```
