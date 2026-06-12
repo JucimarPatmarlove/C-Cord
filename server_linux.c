@@ -352,19 +352,18 @@ void check_inbox(const char* username, char* response) {
         if (sscanf(line, "%49[^:]:%49[^:]:%399[^\n]", dest, from, msg) == 3) {
             if (strcmp(dest, username) == 0) {
                 char entry[512];
-                /* msg já contém "[YYYY-MM-DD HH:MM:SS] texto" */
-                sprintf(entry, " [%d] De: %s | %s\n", ++count, from, msg);
-                        /* Verificar se a mensagem possui timestamp (nova versao) */
-                        if (msg[0] == '[' && strlen(msg) > 21 && msg[20] == ']') {
-                            char data_hora[25];
-                            strncpy(data_hora, msg + 1, 19);
-                            data_hora[19] = '\0';
-                            char* texto_real = msg + 22; /* Salta o "[YYYY-MM-DD HH:MM:SS] " */
-                            sprintf(entry, " [%d] De: %-8s | Data: %s | Msg: %s\n", ++count, from, data_hora, texto_real);
-                        } else {
-                            /* Mensagem antiga sem timestamp */
-                            sprintf(entry, " [%d] De: %-8s | Data: (Antiga)          | Msg: %s\n", ++count, from, msg);
-                        }
+                count++;
+                /* Verificar se a mensagem possui timestamp (nova versao) */
+                if (msg[0] == '[' && strlen(msg) > 21 && msg[20] == ']') {
+                    char data_hora[25];
+                    strncpy(data_hora, msg + 1, 19);
+                    data_hora[19] = '\0';
+                    char* texto_real = msg + 22; /* Salta o "[YYYY-MM-DD HH:MM:SS] " */
+                    sprintf(entry, " [%d] De: %-8s | Data: %s | Msg: %s\n", count, from, data_hora, texto_real);
+                } else {
+                    /* Mensagem antiga sem timestamp */
+                    sprintf(entry, " [%d] De: %-8s | Data: (Antiga)          | Msg: %s\n", count, from, msg);
+                }
                 strncat(response, entry, BUF_SIZE - strlen(response) - 1);
             }
         }
