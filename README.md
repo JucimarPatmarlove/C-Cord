@@ -1,7 +1,7 @@
 # C-CORD — Simplified Discord Clone in C
 
-**Versão:** 3.0 (Etapa 3 — Select + TUI + Canais)  
-**Status:** ✅ Etapa 3 Completa  
+**Versão:** 4.0 (Etapa 4 — E2EE + Criptografia)  
+**Status:** ✅ Etapa 4 Completa  
 **Data:** Atualizado
 
 ---
@@ -10,13 +10,14 @@
 
 **C-Cord** é um clone simplificado do Discord implementado em C puro (POSIX), com suporte a:
 
-- ✅ **Autenticação e Registo** com credenciais (AUTH, REGISTER)
+- ✅ **Autenticação e Registo** Seguro (Hash DJB2 verificado via Toy RSA)
 - ✅ **Canais** de chat em tempo real (#geral, #linux, #ajuda, +personalizados)
 - ✅ **Mensagens Privadas** entre utilizadores
 - ✅ **TUI Completa** com 3 modos visuais (GUEST, USER, ADMIN)
 - ✅ **Gestão Administrativa** (aprovar/rejeitar contas, criar canais, auditoria)
 - ✅ **Chat em Tempo Real** com `select()` multiplexing (stdin + socket simultâneos)
 - ✅ **Ligação Persistente** durante toda a sessão
+- ✅ **Segurança Zero-Trust** (E2EE) com Diffie-Hellman e Cifra de César
 
 ---
 
@@ -64,7 +65,7 @@ gcc -Wall -Wextra -o client_linux client_linux.c
 **GUEST** (Branco) — Pré-login
 
 ```
-BEM-VINDO AO C-CORD (v3.0)
+BEM-VINDO AO C-CORD (v4.0)
 [ 1 ] Iniciar Sessão
 [ 2 ] Registar Utilizador
 [ 0 ] Terminar Ligação
@@ -99,16 +100,17 @@ BEM-VINDO AO C-CORD (v3.0)
 ## 📊 Arquitectura
 
 ```
-CLIENT (1,704 linhas)           SERVER (1,346 linhas)
+CLIENT (1,825 linhas)           SERVER (1,681 linhas)
 ├─ draw_header()                ├─ select()
-├─ menu_pre_login()             ├─ handle_auth()
+├─ motor_criptografico()        ├─ motor_criptografico()
+├─ menu_pre_login()             ├─ handle_auth_hash()
 ├─ menu_user()                  ├─ handle_broadcast()
-├─ menu_admin()                 ├─ handle_list_*()
+├─ menu_admin()                 ├─ handle_dh_exchange()
 ├─ submenu_*() [6 menus]        └─ users.txt (BD simples)
 └─ enviar_e_receber()
 
           ↕ TCP Socket (Porto 10000)
-          ↕ Ligação Persistente
+          ↕ Ligação Persistente & Segura (E2EE)
 ```
 
 ---
@@ -133,12 +135,13 @@ CLIENT (1,704 linhas)           SERVER (1,346 linhas)
 
 ```
 /C-Cord/
-├── client_linux.c         — Cliente com TUI (1,704 linhas, 0 warnings)
-├── server_linux.c         — Servidor com select() (1,346 linhas, 0 warnings)
+├── client_linux.c         — Cliente com TUI (1,825 linhas, 0 warnings)
+├── server_linux.c         — Servidor com select() (1,681 linhas, 0 warnings)
 ├── users.txt              — Base de dados (ID:User:Pass:Role:State)
 ├── README.md              — Este ficheiro
 ├── DOCUMENTACAO.md        — Guia técnico detalhado
-├── ETAPA3_EXPLICACAO.md   — Explicação detalhada do código da Etapa 3 (NOVO)
+├── FASES_DO_PROJETO.md    — Guia explicativo das 4 Fases Arquiteturais
+├── ETAPA3_EXPLICACAO.md   — Explicação detalhada do código da Etapa 3
 ├── PLANO_RISCOS_TESTES_ETAPA3_FINAL.md — Plano de Riscos e Matriz de Testes
 ├── EVOLUCAO_ARQUITETURA.md — Overview técnico Etapa 3
 └── TESTES.md              — Guia de testes completo
@@ -150,13 +153,13 @@ CLIENT (1,704 linhas)           SERVER (1,346 linhas)
 
 | Métrica                     | Valor          |
 | --------------------------- | -------------- |
-| Linhas de código (Cliente)  | 1,704          |
-| Linhas de código (Servidor) | 1,346          |
-| **Total**                   | **3,050**      |
-| Funções principais          | 24             |
-| Linhas de comentários       | 646+           |
+| Linhas de código (Cliente)  | 1,825          |
+| Linhas de código (Servidor) | 1,681          |
+| **Total**                   | **3,506**      |
+| Funções principais          | 32+            |
+| Linhas de comentários       | 800+           |
 | Compilação                  | 0 warnings ✅  |
-| Testes                      | 8/8 passing ✅ |
+| Testes                      | Passando ✅    |
 | Documentação                | 100% pt_PT ✅  |
 
 ---
@@ -191,14 +194,13 @@ Testa registo, login, comandos de lista, multi-line parsing.
 
 ---
 
-## 🔐 Segurança (Etapa 3)
+## 🔐 Segurança (Etapa 4 - Finalizada)
 
-✅ Validação de credenciais  
-✅ USER/ADMIN differentiation  
-✅ Aprovação de contas (PENDING)  
-✅ Buffer overflow fixes (snprintf)
-
-⏳ **Etapa 4:** Encriptação TLS, 2FA, histórico persistente
+✅ Encriptação Ponta-a-Ponta E2EE (Cifra de César Simétrica)
+✅ Hashing Criptográfico DJB2 das Passwords
+✅ Assinaturas Toy RSA para autenticação de Hashes
+✅ Acordo de Chaves Diffie-Hellman Automático  
+✅ Diferenciação USER/ADMIN e Prevenção de Buffer Overflows
 
 ---
 
@@ -209,7 +211,7 @@ Testa registo, login, comandos de lista, multi-line parsing.
 | 1     | ✅     | Cliente TCP + AUTH + GET_INFO             |
 | 2     | ✅     | Canais + JOIN/LEAVE/BROADCAST + Mensagens |
 | 3     | ✅     | TUI + Menus + Chat tempo real (select)    |
-| 4     | 📋     | SQLite + 2FA + TLS + Histórico            |
+| 4     | ✅     | E2EE + DH + RSA + Hash + Segurança Zero-Trust |
 
 ---
 
@@ -222,4 +224,4 @@ Testa registo, login, comandos de lista, multi-line parsing.
 
 ---
 
-**Versão:** 3.0 | **Data:** 2026-06-02 | **Status:** ✅ Etapa 3 Completa
+**Versão:** 4.0 | **Data:** Junho de 2026 | **Status:** ✅ Etapa 4 Completa

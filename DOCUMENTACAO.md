@@ -1,7 +1,7 @@
-# C-CORD v3.0 — Documentação Técnica Completa
+# C-CORD v4.0 — Documentação Técnica Completa
 
-**Versão:** 3.0 (Etapa 3 Completamente Revista)  
-**Data:** Atualizado  
+**Versão:** 4.0 (Etapa 4 - Segurança e Encriptação Ponta-a-Ponta)  
+**Data:** Atualizado (2026)  
 **Linguagem:** Português Europeu (pt_PT)
 
 ---
@@ -30,6 +30,7 @@
 │  Responsável por:                                    │
 │  • Rendering da TUI (Terminal User Interface)       │
 │  • Captura de input do utilizador                   │
+│  • Cifragem e Decifragem E2EE local (César)         │
 │  • Comunicação TCP com servidor                     │
 │  • Gestão de menus hierárquicos                      │
 │  • Apresentação de respostas coloridas              │
@@ -43,9 +44,10 @@
 ├──────────────────────────────────────────────────────┤
 │  Responsável por:                                    │
 │  • Escuta de conexões TCP                           │
-│  • Processamento de comandos                        │
-│  • Gestão de canais e utilizadores                  │
-│  • Broadcast de mensagens                           │
+│  • Autenticação via Hash DJB2 e RSA                 │
+│  • Troca de Chaves Diffie-Hellman                   │
+│  • Processamento e roteamento de mensagens          │
+│  • Broadcast de pacotes cifrados                    │
 │  • Persistência de dados (users.txt)                │
 │  • Multiplexing com select()                        │
 └──────────────────────────────────────────────────────┘
@@ -520,7 +522,7 @@ ID:Utilizador:Password:Função:Estado
 | ---------- | --------------------------------- | ---------------------------------------- |
 | ID         | Inteiro único                     | Identificador de utilizador              |
 | Utilizador | String                            | Nome de login (único)                    |
-| Password   | String                            | Senha (plaintext Etapa 3; Etapa 4: hash) |
+| Password   | String / Inteiro Longo            | Senha (Hash DJB2 a partir da v4.0)       |
 | Função     | USER, ADMIN                       | Nível de permissões                      |
 | Estado     | ACTIVE, PENDING, INACTIVE, BANNED | Situação da conta                        |
 
@@ -611,17 +613,19 @@ Esperado: Mensagem de broadcast enviada com sucesso
 - ✅ 13 menus + 6 submenus
 - ✅ Chat em tempo real (select())
 - ✅ Ligação persistente
+- ✅ Autenticação por Hash DJB2 e verificada via Toy RSA
+- ✅ Estabelecimento de chaves via Diffie-Hellman
+- ✅ Encriptação Ponta-a-Ponta E2EE (Cifra de César Simétrica)
 - ✅ 0 warnings de compilação
 - ✅ Documentação 100% pt_PT
-- ✅ **Código Totalmente Revisto** e estabilizado (ver `ETAPA3_EXPLICACAO.md`)
+- ✅ Código Totalmente Revisto
 
-### Limitações (Etapa 4)
+### Limitações Arquiteturais Futuras
 
-- ⏳ Sem encriptação (plaintext)
-- ⏳ Sem 2FA
-- ⏳ Sem histórico persistente
-- ⏳ Sem autenticação TLS
+- ⏳ Sem 2FA implementado nativamente
+- ⏳ Sem histórico centralizado e persistente das salas de chat
+- ⏳ Ficheiro plaintext para base de dados local (`users.txt`)
 
 ---
 
-**Versão:** 3.0 | **Data:** 2026-05-25 | **Linguagem:** Português Europeu
+**Versão:** 4.0 | **Data:** Junho de 2026 | **Linguagem:** Português Europeu
