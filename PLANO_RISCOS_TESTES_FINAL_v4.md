@@ -1,7 +1,7 @@
-# C-CORD – Plano de Riscos e Testes (Etapas 1, 2 e 3)
+# C-CORD – Plano de Riscos e Testes Final (v4.0)
 
-**Versão:** 3.0 (Final – alinhada com o código de Junho de 2026)  
-**Data:** 2026-06-11  
+**Versão:** 4.0 (Final – alinhada com a entrega de Junho de 2026)  
+**Data:** 2026-06-22  
 **Responsável:** Diego França (Risk & Testing Manager)  
 **Unidade Curricular:** Administração e Segurança de Sistemas – ESTG/IPG
 
@@ -9,26 +9,24 @@
 
 ## 1. Introdução
 
-Este documento integra o **Plano de Riscos** e o **Plano de Testes** para as Etapas 1, 2 e 3 do projecto C-Cord.  
-A Etapa 3 introduziu:
-
-- Servidor multiplexado com `select()` (ligações persistentes)
-- Canais e broadcast apenas para membros do mesmo canal
-- Cliente com `select()` para escuta dupla (stdin + socket) – chat em tempo real
-- Melhorias: timestamps nas mensagens, comando `DELETE_USER_ADMIN`, validações extra
-
-Todos os testes foram executados no ambiente de desenvolvimento (Kali Linux, GCC, porta 10000) e os resultados são **100% positivos**.
+Este documento integra o **Plano de Riscos** e o **Plano de Testes** consolidados do projecto C-Cord.  
+A versão **v4.0** introduziu:
+- Camada criptográfica E2EE (Encriptação Ponta-a-Ponta) com Cifra de César simétrica dinâmica.
+- Autenticação segura com Hash DJB2 cifrado via Toy RSA de 1024-bits (simulado).
+- Acordo de chaves efêmeras Diffie-Hellman em tempo real entre o cliente e o servidor.
+- Comandos administrativos de segurança (`VIEW_CRYPTO`).
+- Auditoria SecOps interna e mitigação definitiva de overflows com lógica de 128-bits (`__int128`).
 
 ---
 
 ## 2. Identificação da Equipa
 
-| Nome           | Papel              | Responsabilidades na Etapa 3                     |
+| Nome           | Papel              | Responsabilidades no Projeto                     |
 | -------------- | ------------------ | ------------------------------------------------ |
 | Carlos Martins | Team Manager       | Coordenação, planeamento Gantt, apresentações    |
 | Diego França   | Risk & Testing Mgr | Este documento – riscos, testes, validação       |
 | David Bunga    | Dev Team           | Desenvolvimento geral (F1–F15)                   |
-| Jucimar Cabral | Dev Team           | Implementação do servidor/cliente Linux (F3–F10) |
+| Jucimar Cabral | Dev Team           | Implementação do servidor/cliente Linux (F3–F14) |
 
 ---
 
@@ -39,7 +37,7 @@ Todos os testes foram executados no ambiente de desenvolvimento (Kali Linux, GCC
 Riscos avaliados por **Probabilidade** (Baixa/Média/Alta) e **Impacto** (Baixo/Médio/Alto).  
 Estado: `Resolvido` / `Monitorizado` / `Activo` / `Planeado`.
 
-### 3.2 Matriz de Riscos (actualizada para o código final)
+### 3.2 Matriz de Riscos
 
 | ID  | Descrição                                 | Prob. | Impacto | Nível | Mitigação                                     | Estado       |
 | --- | ----------------------------------------- | ----- | ------- | ----- | --------------------------------------------- | ------------ |
@@ -57,34 +55,40 @@ Estado: `Resolvido` / `Monitorizado` / `Activo` / `Planeado`.
 | R12 | Servidor não suporta múltiplos clientes   | Alta  | Alto    | Alto  | **Resolvido com select() na Etapa 3**         | Resolvido    |
 | R13 | Race condition no broadcast               | Média | Alto    | Alto  | select() single-thread elimina races          | Resolvido    |
 | R14 | Cliente bloqueia ao receber broadcast     | Alta  | Alto    | Alto  | **select() duplo (stdin+socket) no cliente**  | Resolvido    |
-| R15 | Passwords em texto simples                | Alta  | Alto    | Alto  | **Planeado para Etapa 4 (hashing/cifra)**     | Planeado     |
-| R16 | Perda de ligação persistente              | Baixa | Alto    | Médio | Timeout configurável; reconexão manual        | Planeado     |
+| R15 | Passwords em texto simples                | Alta  | Alto    | Alto  | **Resolvido com Hash DJB2 + RSA na Etapa 4**  | Resolvido    |
+| R16 | Perda de ligação persistente              | Baixa | Alto    | Médio | Timeout configurável; reconexão manual        | Resolvido    |
 | R17 | Esgotamento de descritores (MAX_CLIENTES) | Baixa | Médio   | Baixo | Limite de 50 clientes; servidor rejeita acima | Resolvido    |
 
 ---
 
 ## 4. Plano de Testes
 
-### 4.1 Ambiente de Teste
+### 4.1 Resumo dos Resultados
 
-- **Sistema:** Kali Linux Rolling (kernel 6.18+)
-- **Compilador:** GCC 11.4 com flags `-Wall -Wextra`
-- **Rede:** 127.0.0.1:10000 (loopback)
-- **Ficheiros:** `users.txt`, `inbox.txt`, `logs.txt` no directório do servidor
-- **Ferramentas auxiliares:** `netcat-openbsd`, múltiplos terminais
+| Categoria | Total | Sucesso |
+|-----------|-------|---------|
+| Etapa 1 (F3-F4) | 8 | ✅ 8/8 |
+| Etapa 2 (F5-F8) | 20 | ✅ 20/20 |
+| Etapa 3 (F9-F10) | 18 | ✅ 18/18 |
+| **Etapa 4 (F11-F14)** | **6** | **✅ 6/6** |
+| **Total** | **52** | **✅ 52/52** |
 
-### 4.2 Resumo dos Resultados
+---
 
-| Categoria               | Total | Sucesso |
-| ----------------------- | ----- | ------- |
-| Testes Etapa 1 (F3-F4)  | 8     | 8 ✅    |
-| Testes Etapa 2 (F5-F8)  | 20    | 20 ✅   |
-| Testes Etapa 3 (F9-F10) | 18\*  | 18 ✅   |
-| Testes de Integração    | 5     | 5 ✅    |
+### 4.2 Testes da Etapa 4 (F11–F14)
 
-> _Na Etapa 3 foram adicionados testes específicos para `DELETE_USER_ADMIN`, timestamps e persistência de canal._
+| ID  | Func. | Descrição                                    | Input                                      | Resultado Esperado                                                         | Resultado Obtido |
+|-----|-------|----------------------------------------------|--------------------------------------------|----------------------------------------------------------------------------|------------------|
+| T47 | F11   | Login com Hash + RSA (E2EE)                 | `admin` / `admin123`                       | Servidor aceita; cliente mostra `[CRYPTO]`                                | ✅ OK            |
+| T48 | F12   | Troca de chaves Diffie-Hellman              | (automático após login)                    | Cliente e servidor calculam `K` igual; mensagem `DH_EXCHANGE` nos logs    | ✅ OK            |
+| T49 | F11   | Broadcast cifrado (César)                   | `BROADCAST Olá`                            | Mensagem cifrada na rede; decifrada no cliente recetor                    | ✅ OK            |
+| T50 | F11   | ECHO com cifra                              | `ECHO Teste`                               | Servidor ecoa mensagem cifrada; cliente decifra e mostra                  | ✅ OK            |
+| T51 | F14   | VIEW_CRYPTO (Admin)                         | (Admin) `VIEW_CRYPTO`                      | Devolve parâmetros DH, RSA, chaves ativas                                 | ✅ OK            |
+| T52 | F14   | VIEW_CRYPTO (User)                          | (User) `VIEW_CRYPTO`                       | `CRYPTO_FAIL: Sem permissões`                                             | ✅ OK            |
 
-### 4.3 Testes da Etapa 3 (F9–F10) – Versão final
+---
+
+### 4.3 Testes da Etapa 3 (F9–F10)
 
 | ID  | Func. | Descrição                                | Input                              | Resultado Esperado                                                    | Resultado Obtido  | Estado |
 | --- | ----- | ---------------------------------------- | ---------------------------------- | --------------------------------------------------------------------- | ----------------- | ------ |
@@ -107,25 +111,12 @@ Estado: `Resolvido` / `Monitorizado` / `Activo` / `Planeado`.
 | T45 | Adm   | `DELETE_USER_ADMIN`                      | `DELETE_USER_ADMIN user1` (admin)  | `DELETE_OK`; user1 removido do sistema                                | Conforme          | ✅ OK  |
 | T46 | -     | Timestamps nas mensagens privadas        | `SEND_MSG` (admin → user1)         | `inbox.txt` guarda `[YYYY-MM-DD HH:MM:SS] mensagem`                   | Confirmado        | ✅ OK  |
 
-### 4.4 Testes de Integração (Etapa 3)
-
-| Nº  | Cenário                             | Sequência de Acções                                       | Resultado Esperado                                   | Estado |
-| --- | ----------------------------------- | --------------------------------------------------------- | ---------------------------------------------------- | ------ |
-| 1   | Registo + aprovação + login         | REGISTER (novo) → AUTH (PENDING) → APPROVE (admin) → AUTH | Novo utilizador consegue autenticar e aceder ao chat | ✅ OK  |
-| 2   | Chat multi-utilizador em tempo real | 3 users em #geral; cada um envia 2 mensagens              | Todos recebem todas as mensagens em tempo real       | ✅ OK  |
-| 3   | Admin bane utilizador durante chat  | Admin executa BAN user1 enquanto user1 está em #geral     | user1 fica INACTIVE; login futuro bloqueado          | ✅ OK  |
-| 4   | Broadcast isolado por canal         | user1 em #geral, user2 em #linux, user3 em #geral         | Apenas user1 e user3 recebem broadcast               | ✅ OK  |
-| 5   | Logout e re-login                   | user1 faz LOGOUT → LOGIN novamente → JOIN #geral          | Estado limpo; novo slot atribuído                    | ✅ OK  |
-
 ---
 
 ## 5. Conclusões
 
-- **Todos os 46 testes unitários e 5 cenários de integração passaram com sucesso.**
-- O código final da Etapa 3 cumpre integralmente os requisitos F9 e F10.
-- O projecto está pronto para a defesa da Etapa 3 e para avançar para a Etapa 4.
+- **Todos os 52 testes unitários e os cenários de integração foram validados com sucesso no Kali Linux.**
+- O C-Cord v4.0 é resiliente a regressões e está em total conformidade com as regras criptográficas especificadas nas Fases de Desenvolvimento.
 
 ---
-
-_Documento actualizado em 2026-06-11 pelo Risk & Testing Manager_  
-_Diego França – C-Cord Dev Group_
+_Documento consolidado em 2026-06-22 por Diego França – Risk & Testing Manager_
