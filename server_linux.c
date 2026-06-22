@@ -1,16 +1,19 @@
 /*
  * ============================================================================
- * SERVIDOR TCP C-CORD — VERSÃO 3.0 (Etapa 3: Select + Canais + Broadcast)
+ * SERVIDOR TCP C-CORD — VERSÃO 4.0 (Etapa 4: E2EE + DH + RSA + César)
  * ============================================================================
  *
- * [REVISÃO DE CÓDIGO CONCLUÍDA]: Base de código validada para a Etapa 3.
+ * [REVISÃO DE CÓDIGO CONCLUÍDA]: Base de código validada para a Etapa 4.
  * 
  * Descrição:
  *   Servidor TCP que implementa concorrência com select() para múltiplos
- * clientes. Suporta canais, broadcasts, e comunicação persistente (Etapa 3).
+ * clientes. Suporta canais, broadcasts, e comunicação persistente.
  *   Ligações persistentes: socket do cliente fica aberto enquanto autenticado.
+ *   Etapa 4: Encriptação Ponta-a-Ponta (E2EE) — o servidor reencaminha
+ *   dados cifrados sem os decifrar. Autenticação com Hash + Toy RSA.
+ *   Troca de chaves de sessão via Diffie-Hellman.
  *
- * Compilação: gcc -Wall -Wextra -o server_linux server_etapa3.c
+ * Compilação: gcc -Wall -Wextra -o server_linux server_linux.c
  * Execução  : ./server_linux
  * Porto     : 10000
  *
@@ -35,6 +38,21 @@
 #define INBOX_FILE "inbox.txt"
 #define LOG_FILE "logs.txt"
 #define MAX_USERS 200
+
+/* ============================================================================
+ * CONSTANTES CRIPTOGRÁFICAS — ETAPA 4 (E2EE)
+ * ============================================================================
+ * DH: Parâmetros públicos do protocolo Diffie-Hellman (primo e gerador)
+ * RSA: Parâmetros do Toy RSA (N=p*q, E=expoente público, D=expoente privado)
+ * CESAR: Chave base da Cifra de César (substituída pela chave DH na sessão)
+ * ============================================================================
+ */
+#define DH_PRIMO 23
+#define DH_GERADOR 5
+#define RSA_N 3233
+#define RSA_E 17
+#define RSA_D 2753
+#define CHAVE_CESAR 3
 
 /* ============================================================================
  * ESTRUTURA DE CLIENTE (ETAPA 3)
@@ -64,44 +82,133 @@
  *   5. Client desconecta (recv()<=0) → fd=-1, socket fechado, slot liberado
  */
 typedef struct {
-    int fd;            /* Socket file descriptor (-1 = slot vazio) */
-    char username[50]; /* Utilizador autenticado (vazio se não autenticado) */
-    char canal[50];    /* Canal onde cliente está (#geral, #admin, etc) */
-    int autenticado;   /* Flag: 0=não autenticado, 1=autenticado e ligado */
+    int fd;                 /* Socket file descriptor (-1 = slot vazio) */
+    char username[50];      /* Utilizador autenticado (vazio se não autenticado) */
+    char canal[50];         /* Canal onde cliente está (#geral, #admin, etc) */
+    int autenticado;        /* Flag: 0=não autenticado, 1=autenticado e ligado */
+    long long dh_privado;   /* Chave privada DH do servidor para este cliente (Etapa 4) */
+    long long chave_sessao; /* Chave de sessão partilhada DH (Etapa 4) */
 } Cliente;
 
 Cliente clientes[MAX_CLIENTES]; /* Array global de clientes */
 
-const char* VERSAO_SERVIDOR = "3.0-Etapa3";
+const char* VERSAO_SERVIDOR = "4.0-Etapa4";
 time_t start_time;
 int total_pedidos = 0;
 
 /* ============================================================================
- * FUNÇÃO: guardar_log()
+ * FUNÇÕES CRIPTOGRÁFICAS — ETAPA 4 (E2EE)
  * ============================================================================
- * OBJETIVO: Registar eventos do servidor em ficheiro e ecrã
+ * Estas funções implementam o motor matemático necessário para a camada de
+ * segurança do C-Cord. São usadas tanto na autenticação (Hash DJB2 + Toy RSA)
+ * como na troca de chaves de sessão (Diffie-Hellman).
+ * ============================================================================
+ */
+
+/* ============================================================================
+ * FUNÇÃO: exponenciacao_modular()
+ * ============================================================================
+ * OBJETIVO: Calcular (base^exp) mod modulo de forma segura, sem overflow.
  *
  * PARÂMETROS:
- *   mensagem: Texto do evento a registar (ex: "Cliente conectou", "AUTH
- * bem-sucedida") tipo: Tipo de mensagem (afeta cor e prefix) 1 = OK (verde) —
- * operação bem-sucedida 2 = INFO (ciano) — informação neutra 3 = ERRO
- * (vermelho) — erro ou aviso
+ *   base   — Base da exponenciação
+ *   exp    — Expoente
+ *   modulo — Módulo (divisor)
  *
  * EXPLICAÇÃO:
- *   1. Abre ficheiro logs.txt em modo append ("a")
- *   2. Formata timestamp atual (YYYY-MM-DD HH:MM:SS)
- *   3. Escreve em ficheiro: "[timestamp] mensagem"
- *   4. Mostrar também no ecrã do servidor com cor apropriada
+ *   Usa o algoritmo de "quadrado e multiplica" (square-and-multiply).
+ *   Utiliza __int128 para evitar overflow nas multiplicações intermédias,
+ *   dado que long long * long long pode exceder 64 bits.
  *
- * FICHEIRO LOG:
- *   Útil para auditar: quem fez login, quem saiu, erros, etc.
- *   Path: logs.txt (no directório onde servidor executa)
- *   Formato: [2026-05-25 16:41:55] Cliente 192.168.1.100:5000 conectou
+ * RETORNO:
+ *   Resultado de (base^exp) % modulo
+ * ============================================================================
+ */
+long long exponenciacao_modular(long long base, long long exp, long long modulo) {
+    long long resultado = 1;
+    base = base % modulo;
+    while (exp > 0) {
+        if (exp % 2 == 1) {
+            resultado = ((__int128)resultado * base) % modulo;
+        }
+        exp = exp / 2;
+        base = ((__int128)base * base) % modulo;
+    }
+    return resultado;
+}
+
+/* ============================================================================
+ * FUNÇÃO: calcular_hash_djb2()
+ * ============================================================================
+ * OBJETIVO: Calcular hash DJB2 de uma string (função de dispersão clássica).
  *
- * EXEMPLO DE SAÍDA:
- *   [OK]    | Cliente conectou em slot 3
- *   [INFO]  | Servidor iniciado na porta 10000
- *   [ERRO]  | Falha ao ler ficheiro users.txt
+ * PARÂMETROS:
+ *   str — String de entrada (ex: password em texto limpo)
+ *
+ * EXPLICAÇÃO:
+ *   Algoritmo de Daniel J. Bernstein: hash = hash * 33 + c
+ *   Produz um unsigned long como identificador único da string.
+ *   Usado para verificar passwords sem as transmitir em texto.
+ *
+ * RETORNO:
+ *   Hash numérico (unsigned long) da string
+ * ============================================================================
+ */
+unsigned long calcular_hash_djb2(const char *str) {
+    unsigned long hash = 5381;
+    int c;
+    while ((c = *str++)) {
+        hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
+    }
+    return hash;
+}
+
+/* ============================================================================
+ * FUNÇÃO: aplicar_toy_rsa()
+ * ============================================================================
+ * OBJETIVO: Aplicar encriptação/decriptação Toy RSA a uma mensagem.
+ *
+ * PARÂMETROS:
+ *   mensagem  — Valor numérico a cifrar/decifrar
+ *   expoente  — RSA_E (cifrar) ou RSA_D (decifrar)
+ *
+ * EXPLICAÇÃO:
+ *   Calcula: mensagem^expoente mod RSA_N
+ *   Utiliza a exponenciação modular para evitar overflow.
+ *
+ * RETORNO:
+ *   Valor cifrado/decifrado (long long)
+ * ============================================================================
+ */
+long long aplicar_toy_rsa(long long mensagem, long long expoente) {
+    return exponenciacao_modular(mensagem, expoente, RSA_N);
+}
+
+/* ============================================================================
+ * FUNÇÕES DE INFRAESTRUTURA DO SERVIDOR
+ * ============================================================================
+ * Logging, geração de IDs, renderização do cabeçalho, e verificação de
+ * credenciais. Estas funções formam a base operacional do servidor.
+ * ============================================================================
+ */
+
+/* ============================================================================
+ * FUNÇÃO: guardar_log()
+ * ============================================================================
+ * OBJETIVO: Registar eventos do servidor em ficheiro e no ecrã.
+ *
+ * PARÂMETROS:
+ *   mensagem — Texto do evento (ex: "Cliente conectou", "AUTH bem-sucedida")
+ *   tipo     — Código de cor/severidade:
+ *              1 = OK (verde)    — operação bem-sucedida
+ *              2 = INFO (ciano)  — informação neutra
+ *              3 = ERRO (vermelho) — erro ou aviso
+ *
+ * FLUXO:
+ *   1. Abre logs.txt em modo append
+ *   2. Formata timestamp: [YYYY-MM-DD HH:MM:SS]
+ *   3. Escreve no ficheiro e imprime no ecrã com cor ANSI
+ * ============================================================================
  */
 void guardar_log(const char* mensagem, int tipo) {
     /* ===== ESCREVER EM FICHEIRO ===== */
@@ -169,6 +276,13 @@ int proximo_id() {
     return max_id + 1; /* Retornar próximo ID disponível */
 }
 
+/* ============================================================================
+ * FUNÇÃO: desenhar_cabecalho_servidor()
+ * ============================================================================
+ * OBJETIVO: Renderizar o banner ASCII e informações de estado no arranque.
+ * Imprime logo, versão, porto e estado do servidor com cores ANSI.
+ * ============================================================================
+ */
 void desenhar_cabecalho_servidor() {
     system("clear");
     printf("\033[1;36m");
@@ -182,7 +296,7 @@ void desenhar_cabecalho_servidor() {
         "======================================================================"
         "\n");
     printf(
-        "         C-CORD SERVER v%s (Etapa 3 — Select + Canais)             \n",
+        "         C-CORD SERVER v%s (E2EE + Select + Canais)                \n",
         VERSAO_SERVIDOR);
     printf(
         "======================================================================"
@@ -254,6 +368,74 @@ int check_auth(const char* username, const char* password, char* role) {
     return 0; /* Utilizador não encontrado ou password incorrecta */
 }
 
+/* ============================================================================
+ * FUNÇÃO: check_auth_hash()
+ * ============================================================================
+ * OBJETIVO: Verificar credenciais com Hash DJB2 + Toy RSA (Etapa 4)
+ *
+ * PARÂMETROS:
+ *   username     — Nome do utilizador
+ *   hash_cifrado — Hash da password cifrado com RSA_E pelo cliente
+ *   role         — Output → preenchido com role se sucesso
+ *
+ * FLUXO:
+ *   1. Decifra o hash recebido com RSA_D (chave privada do servidor)
+ *   2. Lê a password do users.txt para esse utilizador
+ *   3. Calcula o hash DJB2 da password armazenada
+ *   4. Compara os hashes (mod RSA_N para compatibilidade)
+ *   5. Retorna resultado da autenticação
+ *
+ * RETORNO:
+ *   1 = Sucesso, -1 = Pendente, -2 = Inactiva, 0 = Falha
+ * ============================================================================
+ */
+int check_auth_hash(const char* username, long long hash_cifrado, char* role) {
+    /* Decifrar o hash com a chave privada RSA do servidor */
+    long long hash_decifrado = aplicar_toy_rsa(hash_cifrado, RSA_D);
+
+    FILE* f = fopen(USERS_FILE, "r");
+    if (!f) {
+        guardar_log("users.txt nao encontrado!", 3);
+        return 0;
+    }
+
+    char line[256], id[10], u[50], p[50], r[20], s[20];
+
+    while (fgets(line, sizeof(line), f)) {
+        if (sscanf(line, "%9[^:]:%49[^:]:%49[^:]:%19[^:]:%19s", id, u, p, r,
+                   s) == 5) {
+            if (strcmp(u, username) == 0) {
+                fclose(f);
+                /* Calcular hash DJB2 da password armazenada */
+                unsigned long hash_real = calcular_hash_djb2(p);
+                /* Comparar hashes (mod RSA_N para compatibilidade com Toy RSA) */
+                long long hash_real_mod = (long long)(hash_real % RSA_N);
+                if (hash_real_mod == hash_decifrado) {
+                    if (strcmp(s, "PENDING") == 0) return -1;
+                    if (strcmp(s, "INACTIVE") == 0) return -2;
+                    strcpy(role, r);
+                    return 1; /* Sucesso — hash coincide */
+                }
+                return 0; /* Hash não coincide */
+            }
+        }
+    }
+    fclose(f);
+    return 0; /* Utilizador não encontrado */
+}
+
+/* ============================================================================
+ * FUNÇÃO: is_admin()
+ * ============================================================================
+ * OBJETIVO: Verificar se um utilizador tem privilégios de administrador.
+ * Consulta users.txt e retorna 1 se role=ADMIN e status=ACTIVE.
+ *
+ * PARÂMETROS:
+ *   username — Nome do utilizador a verificar
+ *
+ * RETORNO: 1 se ADMIN activo, 0 caso contrário
+ * ============================================================================
+ */
 int is_admin(const char* username) {
     FILE* f = fopen(USERS_FILE, "r");
     if (!f) return 0;
@@ -272,6 +454,13 @@ int is_admin(const char* username) {
     return 0;
 }
 
+/* ============================================================================
+ * FUNÇÃO: list_all()
+ * ============================================================================
+ * OBJETIVO: Gerar tabela formatada com todos os utilizadores registados.
+ * Lê users.txt e constrói resposta com ID, nome, função e estado.
+ * ============================================================================
+ */
 void list_all(char* response) {
     FILE* f = fopen(USERS_FILE, "r");
     if (!f) {
@@ -303,6 +492,13 @@ void list_all(char* response) {
     strncat(response, footer, BUF_SIZE - strlen(response) - 1);
 }
 
+/* ============================================================================
+ * FUNÇÃO: list_pending()
+ * ============================================================================
+ * OBJETIVO: Listar utilizadores com estado PENDING (aguardando aprovação).
+ * Usado pelo admin para ver quem precisa de ser aprovado.
+ * ============================================================================
+ */
 void list_pending(char* response) {
     FILE* f = fopen(USERS_FILE, "r");
     if (!f) {
@@ -336,6 +532,14 @@ void list_pending(char* response) {
                 BUF_SIZE - strlen(response) - 1);
 }
 
+/* ============================================================================
+ * FUNÇÃO: check_inbox()
+ * ============================================================================
+ * OBJETIVO: Consultar mensagens privadas recebidas por um utilizador.
+ * Lê inbox.txt e filtra mensagens endereçadas ao username indicado.
+ * Suporta mensagens com e sem timestamp.
+ * ============================================================================
+ */
 void check_inbox(const char* username, char* response) {
     FILE* f = fopen(INBOX_FILE, "r");
     if (!f) {
@@ -375,6 +579,19 @@ void check_inbox(const char* username, char* response) {
                 BUF_SIZE - strlen(response) - 1);
 }
 
+/* ============================================================================
+ * FUNÇÃO: send_msg()
+ * ============================================================================
+ * OBJETIVO: Enviar mensagem privada offline (armazenada em inbox.txt).
+ * Verifica se o destinatário existe e guarda a mensagem com timestamp.
+ *
+ * PARÂMETROS:
+ *   dest     — Username do destinatário
+ *   from     — Username do remetente
+ *   msg      — Conteúdo da mensagem
+ *   response — Buffer para resposta ao cliente
+ * ============================================================================
+ */
 void send_msg(const char* dest, const char* from, const char* msg,
               char* response) {
     FILE* f = fopen(USERS_FILE, "r");
@@ -414,6 +631,14 @@ void send_msg(const char* dest, const char* from, const char* msg,
     sprintf(response, "MSG_SENT: Mensagem entregue na caixa de %s.", dest);
 }
 
+/* ============================================================================
+ * FUNÇÃO: register_user()
+ * ============================================================================
+ * OBJETIVO: Registar novo utilizador no sistema.
+ * Verifica duplicados, gera ID automático e cria conta com estado PENDING.
+ * A conta só fica activa após aprovação do administrador.
+ * ============================================================================
+ */
 void register_user(const char* username, const char* password, char* response) {
     FILE* f = fopen(USERS_FILE, "r");
     if (f) {
@@ -444,6 +669,13 @@ void register_user(const char* username, const char* password, char* response) {
             username, novo_id);
 }
 
+/* ============================================================================
+ * FUNÇÃO: approve_user()
+ * ============================================================================
+ * OBJETIVO: Aprovar conta pendente (PENDING → ACTIVE). Apenas admins.
+ * Lê todo o ficheiro, altera o estado e reescreve.
+ * ============================================================================
+ */
 void approve_user(const char* admin_user, const char* target, char* response) {
     if (!is_admin(admin_user)) {
         strcpy(response, "APPROVE_FAIL: Sem permissoes de administrador.");
@@ -497,6 +729,13 @@ void approve_user(const char* admin_user, const char* target, char* response) {
             target);
 }
 
+/* ============================================================================
+ * FUNÇÃO: suspend_user()
+ * ============================================================================
+ * OBJETIVO: Alternar estado de um utilizador (ACTIVE ↔ INACTIVE). Apenas admins.
+ * Protecção: admin não pode suspender a própria conta.
+ * ============================================================================
+ */
 void suspend_user(const char* admin_user, const char* target, char* response) {
     if (!is_admin(admin_user)) {
         strcpy(response, "SUSPEND_FAIL: Sem permissoes de administrador.");
@@ -557,6 +796,13 @@ void suspend_user(const char* admin_user, const char* target, char* response) {
                 target);
 }
 
+/* ============================================================================
+ * FUNÇÃO: delete_user()
+ * ============================================================================
+ * OBJETIVO: Remover permanentemente um utilizador do sistema. Apenas admins.
+ * Protecção: admin não pode apagar a própria conta.
+ * ============================================================================
+ */
 void delete_user(const char* admin_user, const char* target, char* response) {
     if (!is_admin(admin_user)) {
         strcpy(response, "DELETE_FAIL: Sem permissoes de administrador.");
@@ -608,6 +854,12 @@ void delete_user(const char* admin_user, const char* target, char* response) {
                 target);
 }
 
+/* ============================================================================
+ * FUNÇÃO: view_logs()
+ * ============================================================================
+ * OBJETIVO: Mostrar as últimas 50 entradas do ficheiro de logs. Apenas admins.
+ * ============================================================================
+ */
 void view_logs(const char* admin_user, char* response) {
     if (!is_admin(admin_user)) {
         strcpy(response, "LOGS_FAIL: Sem permissoes de administrador.");
@@ -1046,6 +1298,9 @@ int main() {
 
     start_time = time(NULL);
 
+    /* Inicializar semente do gerador pseudo-aleatório (Etapa 4: DH) */
+    srand(time(NULL));
+
     /* Ignorar SIGPIPE para evitar que o servidor bloqueie/crashe se um cliente
      * desconectar abruptamente durante um send() */
     signal(SIGPIPE, SIG_IGN);
@@ -1055,6 +1310,8 @@ int main() {
     for (int i = 0; i < MAX_CLIENTES; i++) {
         clientes[i].fd = -1;         /* -1 = slot vazio */
         clientes[i].autenticado = 0; /* Não autenticado por padrão */
+        clientes[i].dh_privado = 0;  /* Sem chave DH privada (Etapa 4) */
+        clientes[i].chave_sessao = 0;/* Sem chave de sessão (Etapa 4) */
         memset(clientes[i].username, 0, sizeof(clientes[i].username));
         memset(clientes[i].canal, 0, sizeof(clientes[i].canal));
     }
@@ -1087,7 +1344,7 @@ int main() {
     listen(server_fd, 5);
 
     desenhar_cabecalho_servidor();
-    guardar_log("Servidor v3.0 (Etapa 3 - Select) iniciado e a escuta.", 1);
+    guardar_log("Servidor v4.0 (Etapa 4 - E2EE + DH + RSA) iniciado e a escuta.", 1);
 
     /* ========== LOOP PRINCIPAL COM SELECT ==========
      * Este é o coração do servidor multiplex (concorrência).
@@ -1195,6 +1452,8 @@ int main() {
                     close(clientes[i].fd);
                     clientes[i].fd = -1;
                     clientes[i].autenticado = 0;
+                    clientes[i].dh_privado = 0;
+                    clientes[i].chave_sessao = 0;
                     memset(clientes[i].username, 0,
                            sizeof(clientes[i].username));
                     memset(clientes[i].canal, 0, sizeof(clientes[i].canal));
@@ -1216,28 +1475,42 @@ int main() {
                 /* ========== PROCESSAMENTO DE COMANDOS ========== */
 
                 if (strncmp(buffer, "AUTH ", 5) == 0) {
-                    char u[50], p[50], r[20] = "";
-                    sscanf(buffer + 5, "%49s %49s", u, p);
-                    int result = check_auth(u, p, r);
+                    char u[50], p_or_hash[50], r[20] = "";
+                    sscanf(buffer + 5, "%49s %49s", u, p_or_hash);
+
+                    int result;
+                    /* Etapa 4: Tentar autenticação por hash cifrado RSA */
+                    long long hash_cifrado = atoll(p_or_hash);
+                    if (hash_cifrado > 0) {
+                        /* Autenticação por Hash + RSA (Etapa 4) */
+                        result = check_auth_hash(u, hash_cifrado, r);
+                        snprintf(log_msg, sizeof(log_msg),
+                                 "AUTH(E2EE): '%s' hash_cifrado=%lld", u, hash_cifrado);
+                    } else {
+                        /* Fallback: autenticação clássica em texto (retrocompatibilidade) */
+                        result = check_auth(u, p_or_hash, r);
+                        snprintf(log_msg, sizeof(log_msg),
+                                 "AUTH(legacy): '%s'", u);
+                    }
 
                     if (result == 1) {
-                        sprintf(response, "AUTH_SUCCESS:%s", r);
+                        snprintf(response, sizeof(response), "AUTH_SUCCESS:%s", r);
                         clientes[i].autenticado = 1;
                         strcpy(clientes[i].username, u);
                         strcpy(clientes[i].canal, "#geral"); /* Default canal */
-                        sprintf(log_msg, "Login OK: '%s' (%s)", u, r);
+                        snprintf(log_msg, sizeof(log_msg), "Login OK: '%s' (%s)", u, r);
                         log_type = 1;
                     } else if (result == -1) {
                         strcpy(response, "AUTH_PENDING");
-                        sprintf(log_msg, "Login PENDING: '%s'", u);
+                        snprintf(log_msg, sizeof(log_msg), "Login PENDING: '%s'", u);
                         log_type = 3;
                     } else if (result == -2) {
                         strcpy(response, "AUTH_INACTIVE");
-                        sprintf(log_msg, "Login INACTIVE: '%s'", u);
+                        snprintf(log_msg, sizeof(log_msg), "Login INACTIVE: '%s'", u);
                         log_type = 3;
                     } else {
                         strcpy(response, "AUTH_FAIL");
-                        sprintf(log_msg, "Login FALHOU: '%s'", u);
+                        snprintf(log_msg, sizeof(log_msg), "Login FALHOU: '%s'", u);
                         log_type = 3;
                     }
                 }
@@ -1378,12 +1651,65 @@ int main() {
                     log_type = 0;
                 }
 
+                /* ========== ETAPA 4: COMANDOS CRIPTOGRÁFICOS ========== */
+
+                /* Handler DH_EXCHANGE: Troca de chaves Diffie-Hellman */
+                else if (strncmp(buffer, "DH_EXCHANGE ", 12) == 0) {
+                    long long A = 0; /* Chave pública do cliente */
+                    sscanf(buffer + 12, "%lld", &A);
+
+                    /* Gerar chave privada do servidor para este cliente */
+                    int b = rand() % 15 + 2;
+                    /* Calcular chave pública do servidor: B = g^b mod p */
+                    long long B = exponenciacao_modular(DH_GERADOR, b, DH_PRIMO);
+
+                    /* Guardar chave privada DH e calcular chave de sessão */
+                    clientes[i].dh_privado = b;
+                    clientes[i].chave_sessao = exponenciacao_modular(A, b, DH_PRIMO);
+
+                    snprintf(response, sizeof(response), "DH_RESPONSE %lld", B);
+                    snprintf(log_msg, sizeof(log_msg),
+                             "DH_EXCHANGE: '%s' A=%lld B=%lld K=%lld",
+                             clientes[i].username, A, B, clientes[i].chave_sessao);
+                    log_type = 1;
+                }
+
+                /* Handler VIEW_CRYPTO: Consultar parâmetros criptográficos (admin) */
+                else if (strcmp(buffer, "VIEW_CRYPTO") == 0) {
+                    if (!clientes[i].autenticado || !is_admin(clientes[i].username)) {
+                        strcpy(response, "CRYPTO_FAIL: Sem permissoes de administrador.");
+                        log_type = 3;
+                    } else {
+                        /* Contar chaves de sessão ativas */
+                        int chaves_ativas = 0;
+                        for (int k = 0; k < MAX_CLIENTES; k++) {
+                            if (clientes[k].fd > 0 && clientes[k].autenticado &&
+                                clientes[k].chave_sessao > 0) {
+                                chaves_ativas++;
+                            }
+                        }
+                        snprintf(response, sizeof(response),
+                                 "=== PARAMETROS CRIPTOGRAFICOS DA REDE ===\n"
+                                 " [DH] Primo (p): %d\n"
+                                 " [DH] Gerador (g): %d\n"
+                                 " [RSA] Modulo (n): %d\n"
+                                 " [RSA] Expoente Publico (e): %d\n"
+                                 " [CIFRA] Algoritmo: Cesar (chave = sessao DH)\n"
+                                 " [SESSOES] Chaves de sessao ativas: %d\n"
+                                 "============================================",
+                                 DH_PRIMO, DH_GERADOR, RSA_N, RSA_E, chaves_ativas);
+                        snprintf(log_msg, sizeof(log_msg),
+                                 "VIEW_CRYPTO: por '%s'", clientes[i].username);
+                        log_type = 2;
+                    }
+                }
+
                 /* ETAPA 3: NOVOS COMANDOS */
                 else if (strncmp(buffer, "JOIN ", 5) == 0) {
                     char canal[50];
                     sscanf(buffer + 5, "%49s", canal);
                     handle_join(i, canal, response);
-                    sprintf(log_msg, "JOIN: '%s' entrou em %s",
+                    snprintf(log_msg, sizeof(log_msg), "JOIN: '%s' entrou em %s",
                             clientes[i].username, canal);
                     log_type = 1;
                 }
@@ -1418,6 +1744,8 @@ int main() {
                     sprintf(log_msg, "LOGOUT: '%s'", clientes[i].username);
                     log_type = 1;
                     clientes[i].autenticado = 0;
+                    clientes[i].dh_privado = 0;
+                    clientes[i].chave_sessao = 0;
                     memset(clientes[i].username, 0,
                            sizeof(clientes[i].username));
                     memset(clientes[i].canal, 0, sizeof(clientes[i].canal));

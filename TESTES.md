@@ -286,6 +286,23 @@ Utilizador a suspender: user2
 
 ---
 
+### TESTE 11: Persistência de Canais e Select (Novo na Revisão)
+
+**Passo:**
+
+1. No Cliente 1, abra a TUI, faça login e entre no canal `#linux`.
+2. Mantenha-o inativo por 10 segundos (Testando `select` blocking timeout).
+3. No Cliente 2, faça login e entre no canal `#linux`.
+4. O Cliente 2 faz `BROADCAST #linux Teste persistente`.
+
+**Esperado:**
+
+- ✅ O `select()` do Cliente 1 deteta a atividade na rede.
+- ✅ O Cliente 1 imprime a mensagem instantaneamente sem que a sua sessão expire.
+- ✅ A ligação manteve-se aberta de forma persistente através do Master `FD_SET` do servidor.
+
+---
+
 ## 🔥 Teste de Stress
 
 ### Teste 1: Múltiplos Clientes Simultâneos

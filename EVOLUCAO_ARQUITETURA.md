@@ -2,7 +2,7 @@
 
 **Projeto:** C-Cord (Clone de Chat TCP)  
 **Fase Atual:** Etapa 3 (I/O Multiplexing & Canais)  
-**Autor:** [O Teu Nome/Mestrado em Cibersegurança]
+**Autor:** Jucimar Cabral Batista da Costa — nº 1012639
 
 ---
 
@@ -55,3 +55,13 @@ Desta forma, o cliente bloqueia no `select()`, aguardando por uma de duas coisas
 
 1. **Atividade no STDIN:** O utilizador digitou algo e pressionou ENTER. O cliente procede para leitura com `fgets()` e envia para o servidor sem risco de bloqueio, retornando instantaneamente.
 2. **Atividade no Socket:** Chegou um `BROADCAST` do servidor. O cliente limpa dinamicamente a linha atual do terminal (usando Códigos ANSI `\033[K`), imprime a mensagem recebida e redesenha o _prompt_, criando uma ilusão perfeita de Chat Assíncrono em Tempo Real.
+
+## 4. Revisão e Refinamento do Código (Fim da Etapa 3)
+
+Durante a revisão final desta etapa, garantimos que:
+
+- Os buffers de input e output estão rigidamente limitados por `snprintf` e `strncpy` para prevenir _Buffer Overflows_.
+- O `FD_SET` é recriado iterativamente a partir do Array seguro de descritores persistentes a cada ciclo, mitigando erros de descritores mortos que causariam picos de CPU (100% CPU Usage loop).
+- Adicionou-se o tratamento apropriado para carateres órfãos em redes mistas (Carriage Returns `\r` perdidos), otimizando a formatação na `imprimir_resposta()`.
+
+**Para mais detalhes de código:** Consultar o novo documento `ETAPA3_EXPLICACAO.md`.

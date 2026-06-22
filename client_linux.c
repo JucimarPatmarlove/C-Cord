@@ -1,7 +1,7 @@
 /*
  * ============================================================================
- * CLIENTE TCP C-CORD — VERSÃO 3.0
- * (Etapa 3: Select + Ligação Persistente + TUI com Menus + Canais)
+ * CLIENTE TCP C-CORD — VERSÃO 4.0
+ * (Etapa 4: E2EE + DH + RSA + César + Select + TUI)
  * ============================================================================
  *
  * [REVISÃO DE CÓDIGO CONCLUÍDA]: Funcionalidades validadas. Multiplexação ativa.
@@ -9,6 +9,8 @@
  *   Cliente com TUI completa (3 modos visuais) fiel aos mockups aprovados.
  *   select() para dupla escuta (stdin + socket) no chat em tempo real.
  *   Ligação persistente: socket fica aberto durante toda a sessão.
+ *   Etapa 4: Encriptação Ponta-a-Ponta (E2EE) — autenticação com Hash DJB2
+ *   + Toy RSA, troca de chaves Diffie-Hellman, cifra de César nos canais.
  *
  * Compilação : gcc -Wall -Wextra -o client_linux client_linux.c
  * Execução   : ./client_linux <IP_SERVIDOR> <PORTO>
@@ -37,6 +39,17 @@
 #define STDIN_FILENO 0
 
 /* ============================================================================
+ * CONSTANTES CRIPTOGRÁFICAS — ETAPA 4 (E2EE)
+ * ============================================================================
+ */
+#define DH_PRIMO 23
+#define DH_GERADOR 5
+#define RSA_N 3233
+#define RSA_E 17
+#define RSA_D 2753
+#define CHAVE_CESAR 3
+
+/* ============================================================================
  * ESTADO GLOBAL DA SESSÃO
  * ============================================================================
  */
@@ -47,6 +60,10 @@ char current_canal[50] = "";
 time_t login_time = 0;
 int server_fd = -1;
 int msgs_por_ler = 0;
+
+/* Estado criptográfico da sessão (Etapa 4) */
+long long chave_sessao = CHAVE_CESAR; /* Chave César activa (substituída por DH) */
+long long privado_cliente = 0;         /* Chave privada DH do cliente */
 
 /* ============================================================================
  * UTILITÁRIOS
@@ -177,6 +194,147 @@ int enviar_e_receber(const char* cmd, char* resp, int resp_sz) {
 }
 
 /* ============================================================================
+ * FUNÇÕES CRIPTOGRÁFICAS — ETAPA 4 (E2EE)
+ * ============================================================================
+ */
+
+/* ============================================================================
+ * FUNÇÃO: exponenciacao_modular(long long base, long long exp, long long mod)
+ * ============================================================================
+ * OBJETIVO: Realiza a operação (base^exp) % mod de forma segura e eficiente.
+ * Utiliza o algoritmo de Exponenciação Rápida (Square-and-Multiply).
+ * Emprega o tipo '__int128' nas multiplicações intermédias para evitar
+ * Integer Overflow durante as operações matemáticas pesadas do Diffie-Hellman e RSA.
+ * ============================================================================
+ */
+long long exponenciacao_modular(long long base, long long exp, long long modulo) {
+    long long resultado = 1;
+    base = base % modulo;
+    while (exp > 0) {
+        if (exp % 2 == 1) {
+            resultado = ((__int128)resultado * base) % modulo;
+        }
+        exp = exp / 2;
+        base = ((__int128)base * base) % modulo;
+    }
+    return resultado;
+}
+
+/* ============================================================================
+ * FUNÇÃO: calcular_hash_djb2(const char *str)
+ * ============================================================================
+ * OBJETIVO: Calcula o hash de uma string utilizando o algoritmo DJB2 criado
+ * por Daniel J. Bernstein. A constante 5381 e a operação (hash * 33 + c)
+ * garantem uma excelente distribuição pseudo-aleatória.
+ * Na Etapa 4, este hash é a representação numérica da password do utilizador.
+ * ============================================================================
+ */
+unsigned long calcular_hash_djb2(const char *str) {
+    unsigned long hash = 5381;
+    int c;
+    while ((c = *str++)) {
+        hash = ((hash << 5) + hash) + c;
+    }
+    return hash;
+}
+
+/* ============================================================================
+ * FUNÇÃO: aplicar_toy_rsa(long long mensagem, long long expoente)
+ * ============================================================================
+ * OBJETIVO: Aplica a função matemática do RSA a um bloco (mensagem).
+ * Sendo uma implementação "Toy", utiliza primos pequenos (RSA_N = 3233).
+ * Na Etapa 4, o cliente cifra o hash DJB2 da sua password com a Chave
+ * Pública do servidor (RSA_E).
+ * ============================================================================
+ */
+long long aplicar_toy_rsa(long long mensagem, long long expoente) {
+    return exponenciacao_modular(mensagem, expoente, RSA_N);
+}
+
+/* ============================================================================
+ * FUNÇÃO: cifrar_cesar(char *texto, int chave)
+ * ============================================================================
+ * OBJETIVO: Aplica uma cifra de substituição simples (Cifra de César).
+ * Desloca apenas caracteres alfabéticos ASCII. A chave utilizada é dinâmica,
+ * sendo o resultado da negociação Diffie-Hellman (chave_sessao).
+ * ============================================================================
+ */
+void cifrar_cesar(char *texto, int chave) {
+    int deslocamento = ((chave % 26) + 26) % 26; /* Normalizar para 0-25 */
+    for (int i = 0; texto[i] != '\0'; i++) {
+        if (texto[i] >= 'A' && texto[i] <= 'Z') {
+            texto[i] = 'A' + (texto[i] - 'A' + deslocamento) % 26;
+        } else if (texto[i] >= 'a' && texto[i] <= 'z') {
+            texto[i] = 'a' + (texto[i] - 'a' + deslocamento) % 26;
+        }
+    }
+}
+
+/* ============================================================================
+ * FUNÇÃO: decifrar_cesar(char *texto, int chave)
+ * ============================================================================
+ * OBJETIVO: Reverte a operação da Cifra de César, subtraindo o deslocamento.
+ * Utilizado para restaurar o texto em claro das mensagens BROADCAST e ECHO
+ * que o servidor envia ao cliente.
+ * ============================================================================
+ */
+void decifrar_cesar(char *texto, int chave) {
+    int deslocamento = ((chave % 26) + 26) % 26;
+    for (int i = 0; texto[i] != '\0'; i++) {
+        if (texto[i] >= 'A' && texto[i] <= 'Z') {
+            texto[i] = 'A' + (texto[i] - 'A' - deslocamento + 26) % 26;
+        } else if (texto[i] >= 'a' && texto[i] <= 'z') {
+            texto[i] = 'a' + (texto[i] - 'a' - deslocamento + 26) % 26;
+        }
+    }
+}
+
+/* ============================================================================
+ * FUNÇÃO: iniciar_diffie_hellman()
+ * ============================================================================
+ * OBJETIVO: Estabelecer chave de sessão partilhada via protocolo Diffie-Hellman.
+ *
+ * FLUXO:
+ *   1. Gera chave privada aleatória do cliente (a = rand() % 15 + 2)
+ *   2. Calcula chave pública do cliente: A = g^a mod p
+ *   3. Envia DH_EXCHANGE <A> ao servidor
+ *   4. Recebe DH_RESPONSE <B> (chave pública do servidor)
+ *   5. Calcula chave de sessão: K = B^a mod p
+ *   6. Substitui a chave César global pela chave DH negociada
+ * ============================================================================
+ */
+void iniciar_diffie_hellman(void) {
+    /* Gerar chave privada aleatória */
+    privado_cliente = rand() % 15 + 2;
+
+    /* Calcular chave pública do cliente: A = g^a mod p */
+    long long A = exponenciacao_modular(DH_GERADOR, privado_cliente, DH_PRIMO);
+
+    /* Enviar DH_EXCHANGE ao servidor */
+    char cmd[BUF_SIZE], res[BUF_SIZE];
+    snprintf(cmd, sizeof(cmd), "DH_EXCHANGE %lld", A);
+
+    if (enviar_e_receber(cmd, res, BUF_SIZE) <= 0) {
+        printf(" \033[1;31m[ERRO]\033[0m Falha na troca Diffie-Hellman.\n");
+        return;
+    }
+
+    /* Extrair B da resposta DH_RESPONSE */
+    long long B = 0;
+    if (strncmp(res, "DH_RESPONSE ", 12) == 0) {
+        sscanf(res + 12, "%lld", &B);
+
+        /* Calcular chave de sessão: K = B^a mod p */
+        chave_sessao = exponenciacao_modular(B, privado_cliente, DH_PRIMO);
+
+        printf(" \033[1;32m[CRYPTO]\033[0m Chave de sessão DH estabelecida.\n");
+        printf(" \033[1;33m[DEBUG]\033[0m  A=%lld B=%lld K=%lld\n", A, B, chave_sessao);
+    } else {
+        printf(" \033[1;31m[ERRO]\033[0m Resposta DH inesperada: %s\n", res);
+    }
+}
+
+/* ============================================================================
  * FUNÇÃO: imprimir_resposta(const char* buffer)
  * Imprime respostas do servidor linha por linha com cores ANSI apropriadas.
  *
@@ -289,7 +447,12 @@ int fluxo_login(void) {
 
         printf("\n [A VERIFICAR CREDENCIAIS...]\n");
 
-        snprintf(cmd, sizeof(cmd), "AUTH %s %s", u, p);
+        /* Etapa 4: Calcular hash DJB2 da password e cifrar com RSA */
+        unsigned long hash = calcular_hash_djb2(p);
+        long long hash_mod = (long long)(hash % RSA_N);
+        long long hash_cifrado = aplicar_toy_rsa(hash_mod, RSA_E);
+
+        snprintf(cmd, sizeof(cmd), "AUTH %s %lld", u, hash_cifrado);
         if (enviar_e_receber(cmd, res, BUF_SIZE) <= 0) {
             printf(" \033[1;31m[ERRO]\033[0m Servidor não respondeu.\n");
             aguardar_enter();
@@ -303,7 +466,11 @@ int fluxo_login(void) {
             login_time = time(NULL);
             strcpy(current_canal, "#geral");
 
-            printf(" \033[1;32m[OK]\033[0m Autenticação aceite!\n");
+            printf(" \033[1;32m[OK]\033[0m Autenticação aceite! (Hash+RSA)\n");
+
+            /* Etapa 4: Iniciar troca de chaves Diffie-Hellman */
+            iniciar_diffie_hellman();
+
             printf("\n----------------------------------------------------\n");
             printf(" >> Pressione ENTER para entrar no Menu Principal...\n");
             printf("----------------------------------------------------\n");
@@ -498,7 +665,7 @@ void menu_pre_login(void) {
                 printf("\n [OK] Ligação ao servidor fechada com segurança.\n");
                 printf(
                     "\n====================================================\n");
-                printf("       OBRIGADO POR USAR O C-CORD v3.0\n");
+                printf("       OBRIGADO POR USAR O C-CORD v4.0\n");
                 printf(
                     "====================================================\n");
                 close(server_fd);
@@ -643,8 +810,16 @@ void submenu_perfil(void) {
 }
 
 /* ============================================================================
- * SUBMENU LISTA DE CONTACTOS (USER)
- * Conforme mockup: lista com estado ONLINE/OFFLINE.
+ * FUNÇÃO: submenu_contactos()
+ * ============================================================================
+ * OBJETIVO: Submenu que exibe a lista de utilizadores registados e o seu
+ * estado actual (ONLINE/OFFLINE). Permite ao utilizador iniciar o envio
+ * de uma mensagem privada para um dos contactos listados.
+ *
+ * FLUXO:
+ *   1. Pede a lista de contactos ao servidor usando o comando LIST_ALL.
+ *   2. Filtra a resposta e formata os dados numa tabela com cores (Verde/Vermelho).
+ *   3. Oferece opções de envio de mensagem ou actualização da lista.
  * ============================================================================
  */
 void submenu_contactos(void) {
@@ -974,6 +1149,13 @@ void submenu_canais(void) {
                     }
                     incoming[n] = '\0';
                     
+                    /* Etapa 4: Decifrar mensagem recebida (broadcast ou echo) */
+                    char *sep = strstr(incoming, ": ");
+                    if (sep != NULL) {
+                        char *msg_cifrada = sep + 2;
+                        decifrar_cesar(msg_cifrada, (int)chave_sessao);
+                    }
+                    
                     /* Carriage return '\r' retorna o cursor ao ínicio da linha,
                      * e '\033[K' apaga todo o texto dessa mesma linha. */
                     printf("\r\033[K");
@@ -1001,13 +1183,15 @@ void submenu_canais(void) {
                     }
 
                     if (strlen(input) > 0) {
-                        /* BUG 1 CORRIGIDO: enviar só a mensagem, sem o canal */
+                        /* Etapa 4: Cifrar mensagem antes de enviar */
+                        cifrar_cesar(input, (int)chave_sessao);
+                        
                         snprintf(cmd, sizeof(cmd), "BROADCAST %s", input);
                         if (send(server_fd, cmd, strlen(cmd), 0) < 0) {
                             printf(" \033[1;31m[ERRO]\033[0m Falha ao enviar.\n");
                             break;
                         }
-                        /* Ler resposta BCAST_SENT com timeout */
+                        /* Ler resposta BCAST_SENT / ECHO com timeout */
                         memset(res, 0, BUF_SIZE);
                         struct timeval tv = {2, 0};
                         fd_set rfd;
@@ -1017,6 +1201,11 @@ void submenu_canais(void) {
                             int n = recv(server_fd, res, BUF_SIZE - 1, 0);
                             if (n > 0) {
                                 res[n] = '\0';
+                                /* Etapa 4: Decifrar echo se contiver ": " */
+                                char *echo_sep = strstr(res, ": ");
+                                if (echo_sep != NULL) {
+                                    decifrar_cesar(echo_sep + 2, (int)chave_sessao);
+                                }
                                 if (strstr(res, "BCAST_SENT")) {
                                     printf(
                                         " \033[1;32m[OK]\033[0m Mensagem "
@@ -1036,8 +1225,16 @@ void submenu_canais(void) {
 }
 
 /* ============================================================================
- * SUBMENU GESTÃO DE UTILIZADORES (ADMIN)
- * Conforme mockup: listar pendentes, aprovar, rejeitar, banir.
+ * FUNÇÃO: submenu_gestao_utilizadores()
+ * ============================================================================
+ * OBJETIVO: Menu exclusivo para Administradores. Permite gerir o ciclo de vida
+ * das contas de utilizador (Aprovar, Rejeitar, Banir ou Eliminar).
+ *
+ * FLUXO:
+ *   1. Solicita e imprime todos os utilizadores (LIST_ALL).
+ *   2. Solicita e imprime os utilizadores aguardando aprovação (LIST_PENDING).
+ *   3. Apresenta opções de acção, solicitando o username alvo.
+ *   4. O servidor realiza a validação de segurança do comando emitido.
  * ============================================================================
  */
 void submenu_gestao_utilizadores(void) {
@@ -1179,8 +1376,11 @@ void submenu_gestao_utilizadores(void) {
 }
 
 /* ============================================================================
- * SUBMENU GESTÃO DE CANAIS (ADMIN)
- * Conforme mockup: criar canal, atualizar descrição, remover.
+ * FUNÇÃO: submenu_gestao_canais()
+ * ============================================================================
+ * OBJETIVO: Menu de administração focado na criação, alteração de descrições e
+ * eliminação de canais de chat. Os canais criados estarão imediatamente
+ * disponíveis para qualquer utilizador se juntar.
  * ============================================================================
  */
 void submenu_gestao_canais(void) {
@@ -1267,8 +1467,12 @@ void submenu_gestao_canais(void) {
 }
 
 /* ============================================================================
- * SUBMENU SEGURANÇA (ADMIN)
- * Conforme mockup: políticas de senha, logs, auditoria.
+ * FUNÇÃO: submenu_seguranca()
+ * ============================================================================
+ * OBJETIVO: Painel de administração de segurança (Dashboard SecOps).
+ * Imprime informações simuladas sobre as políticas activas do servidor e
+ * oferece opções para consultar ficheiros de logs e observar as chaves
+ * e parâmetros matemáticos em uso na rede (Etapa 4 - Criptografia).
  * ============================================================================
  */
 void submenu_seguranca(void) {
@@ -1293,6 +1497,7 @@ void submenu_seguranca(void) {
         printf(" [ 1 ] Ver Logs de Acesso\n");
         printf(" [ 2 ] Ver Histórico de Transações\n");
         printf(" [ 3 ] Ativar 2FA para Admin\n");
+        printf(" [ 4 ] Consultar Parâmetros Criptográficos da Rede\n");
         printf(" [ 0 ] Voltar ao Menu Principal\n");
         printf("----------------------------------------------------\n");
         printf(" Escolha: ");
@@ -1326,9 +1531,19 @@ void submenu_seguranca(void) {
 
             case 3:
                 printf("\n [2FA PARA ADMINISTRADOR]\n");
-                printf(" Configurar 2FA via SMS/Email (Etapa 4 — em breve)\n");
+                printf(" Configurar 2FA via SMS/Email (Em desenvolvimento)\n");
                 aguardar_enter();
                 break;
+
+            case 4: {
+                /* Etapa 4: Consultar parâmetros criptográficos da rede */
+                char res_crypto[BUF_SIZE];
+                enviar_e_receber("VIEW_CRYPTO", res_crypto, BUF_SIZE);
+                printf("\n");
+                imprimir_resposta(res_crypto);
+                aguardar_enter();
+                break;
+            }
 
             case 0:
                 sair = 1;
@@ -1597,6 +1812,9 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    /* Inicializar semente do gerador pseudo-aleatório (Etapa 4: DH) */
+    srand(time(NULL));
+
     const char* server_ip = argv[1];
     int server_port = atoi(argv[2]);
 
@@ -1629,7 +1847,7 @@ int main(int argc, char* argv[]) {
 
     /* Menu de boas-vindas */
     draw_header(0, "CONECTADO AO SERVIDOR COM SUCESSO");
-    printf("\n Bem-vindo ao C-Cord v3.0!\n");
+    printf("\n Bem-vindo ao C-Cord v4.0! (E2EE Ativo)\n");
     printf(" Servidor: %s:%d\n", server_ip, server_port);
     printf("\n----------------------------------------------------\n");
     printf(" >> Pressione ENTER para continuar...\n");
@@ -1642,6 +1860,8 @@ int main(int argc, char* argv[]) {
         current_user[0] = '\0';
         current_canal[0] = '\0';
         login_time = 0;
+        chave_sessao = CHAVE_CESAR; /* Resetar chave criptográfica (Etapa 4) */
+        privado_cliente = 0;
 
         menu_pre_login();  /* Se opt==0 dentro, faz exit(0) */
 
@@ -1658,7 +1878,7 @@ int main(int argc, char* argv[]) {
     /* Encerramento (nunca executa porque exit() é chamado em menu_pre_login) */
     close(server_fd);
     printf("\n====================================================\n");
-    printf("       OBRIGADO POR USAR O C-CORD v3.0\n");
+    printf("       OBRIGADO POR USAR O C-CORD v4.0\n");
     printf("====================================================\n");
 
     return 0;

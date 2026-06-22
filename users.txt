@@ -1,3 +1,5 @@
 1:admin:admin123:ADMIN:ACTIVE
 2:user1:pass1:USER:ACTIVE
 3:user2:pass2:USER:ACTIVE
+4:user3:pass3:USER:INACTIVE
+5:Pedro:1234:USER:INACTIVE
