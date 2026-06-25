@@ -185,6 +185,204 @@ long long aplicar_toy_rsa(long long mensagem, long long expoente) {
 }
 
 /* ============================================================================
+ * F13 — CONFIGURAÇÃO CRIPTOGRÁFICA GLOBAL DO SERVIDOR
+ * ============================================================================
+ * cipher_mode:
+ *   0 = César Generalizado (default F11 — chave derivada de DH)
+ *   1 = Vigenère (2º simétrico)
+ * hash_integridade:
+ *   0 = sem hash (default)
+ *   1 = djb2 appended em cada mensagem de broadcast/privada
+ * ============================================================================ */
+int cipher_mode      = 0;        /* 0=César, 1=Vigenère */
+char chave_vigenere[64] = "ccord"; /* Chave Vigenère padrão */
+int hash_integridade = 0;        /* 0=off, 1=on */
+
+/* ============================================================================
+ * F13 — VARIÁVEIS DE CONFIGURAÇÃO CRIPTOGRÁFICA (MÉTODO SIMÉTRICO E HASH)
+ * ============================================================================
+ * metodo_simetrico_atual:
+ *   0 = Cifra de César (deslocamento módulo 26, só letras)
+ *   1 = Cifra XOR (byte a byte com a chave_sessao, mais robusto)
+ * integridade_ativa:
+ *   0 = Sem verificação de hash nas mensagens broadcast/echo
+ *   1 = Hash DJB2 anexado/verificado em cada mensagem de canal
+ * ============================================================================ */
+int metodo_simetrico_atual = 0;  /* 0=César, 1=XOR */
+int integridade_ativa      = 1;  /* 1=verifica hash DJB2, 0=desativado */
+
+/* ============================================================================
+ * F13 SIMÉTRICO 2: CIFRA DE VIGENÈRE (servidor usa para validação de logs)
+ *
+ * Actua sobre ASCII imprimível [32..126].
+ * shift por posição i = (key[i%keylen] - 'a') normalizado.
+ * encrypt=1 cifra, encrypt=0 decifra.
+ * ============================================================================ */
+void vigenere_process(const char* in, char* out, const char* key, int encrypt) {
+    int keylen = (int)strlen(key);
+    if (keylen == 0) { strcpy(out, in); return; }
+    int j = 0;
+    for (int i = 0; in[i] != '\0'; i++) {
+        unsigned char c = (unsigned char)in[i];
+        if (c >= 32 && c <= 126) {
+            char kc = key[j % keylen];
+            int shift;
+            if      (kc >= 'A' && kc <= 'Z') shift = kc - 'A';
+            else if (kc >= 'a' && kc <= 'z') shift = kc - 'a';
+            else                              shift = kc % 26;
+            int dir = encrypt ? shift : (95 - (shift % 95));
+            out[i] = (char)(((c - 32 + dir) % 95) + 32);
+            j++;
+        } else {
+            out[i] = in[i];
+        }
+    }
+    out[strlen(in)] = '\0';
+}
+
+/* ============================================================================
+ * F13 SIMÉTRICO 1: CIFRA DE CÉSAR GENERALIZADO (ASCII imprimível [32..126])
+ *
+ * CIFRAGEM:  c' = ((c-32+shift) % 95) + 32
+ * DECIFRAGEM: c = ((c'-32+(95-shift)) % 95) + 32
+ * encrypt=1 cifra, encrypt=0 decifra.
+ * ============================================================================ */
+void cesar_process(const char* in, char* out, int shift, int encrypt) {
+    shift = ((shift % 95) + 95) % 95;
+    int dir = encrypt ? shift : (95 - shift);
+    for (int i = 0; in[i] != '\0'; i++) {
+        unsigned char c = (unsigned char)in[i];
+        if (c >= 32 && c <= 126)
+            out[i] = (char)(((c - 32 + dir) % 95) + 32);
+        else
+            out[i] = in[i];
+    }
+    out[strlen(in)] = '\0';
+}
+
+/* ============================================================================
+ * F13 ASSIMÉTRICO: TOY RSA — cifragem/decifragem de string caracter a caracter
+ *
+ * rsa_encrypt_str: string → inteiros decimais separados por espaço
+ * rsa_decrypt_str: inteiros separados por espaço → string original
+ *
+ * Conforme enunciado p.3: C = M^e mod n, M = C^d mod n
+ * ============================================================================ */
+void rsa_encrypt_str(const char* in, char* out, int out_sz) {
+    out[0] = '\0';
+    char tmp[16];
+    for (int i = 0; in[i] != '\0'; i++) {
+        long long M = (unsigned char)in[i];
+        long long C = exponenciacao_modular(M, RSA_E, RSA_N);
+        snprintf(tmp, sizeof(tmp), "%lld", C);
+        if (i > 0) strncat(out, " ", out_sz - (int)strlen(out) - 1);
+        strncat(out, tmp, out_sz - (int)strlen(out) - 1);
+    }
+}
+
+void rsa_decrypt_str(const char* in, char* out) {
+    char copia[BUF_SIZE];
+    strncpy(copia, in, BUF_SIZE - 1);
+    copia[BUF_SIZE - 1] = '\0';
+    int idx = 0;
+    char* tok = strtok(copia, " ");
+    while (tok != NULL && idx < BUF_SIZE - 1) {
+        long long C = atoll(tok);
+        long long M = exponenciacao_modular(C, RSA_D, RSA_N);
+        out[idx++] = (char)M;
+        tok = strtok(NULL, " ");
+    }
+    out[idx] = '\0';
+}
+
+/* ============================================================================
+ * F13 HASH DE INTEGRIDADE: djb2 appended à mensagem
+ *
+ * Se hash_integridade==1, o servidor verifica o campo "|HASH:<val>"
+ * no final de mensagens privadas antes de as guardar.
+ * ============================================================================ */
+int verificar_hash_mensagem(const char* msg_com_hash, char* msg_limpa) {
+    strncpy(msg_limpa, msg_com_hash, BUF_SIZE - 1);
+    msg_limpa[BUF_SIZE - 1] = '\0';
+    char* hp = strstr(msg_limpa, "|HASH:");
+    if (!hp) return 1; /* sem hash — aceitar se integridade_ativa==0 */
+    *hp = '\0';        /* truncar antes do separador */
+    unsigned long recebido = strtoul(hp + 6, NULL, 10);
+    unsigned long calculado = calcular_hash_djb2(msg_limpa);
+    return (recebido == calculado) ? 1 : 0;
+}
+
+/* ============================================================================
+ * F13 — CIFRA XOR (2.º MÉTODO SIMÉTRICO)
+ * ============================================================================
+ * Aplica XOR byte a byte entre cada caracter imprimível da mensagem e a chave.
+ * O XOR é simétrico: cifrar e decifrar usam a mesma operação.
+ * Apenas caracteres imprimíveis [32..126] são processados; os restantes
+ * (newlines, caracteres de controlo) são preservados intactos.
+ *
+ * PARÂMETROS:
+ *   texto — String a cifrar/decifrar (modificada in-place)
+ *   chave — Chave inteira derivada da sessão DH
+ * ============================================================================ */
+void cifrar_xor(char *texto, int chave) {
+    /* Normalizar chave para intervalo [1..94] para não anular caracteres */
+    int k = ((chave % 94) + 94) % 94;
+    if (k == 0) k = 1; /* Evitar chave nula (XOR com 0 = texto limpo) */
+    for (int i = 0; texto[i] != '\0'; i++) {
+        unsigned char c = (unsigned char)texto[i];
+        if (c >= 32 && c <= 126) {
+            /* Aplicar XOR e recolocar no intervalo imprimível */
+            int resultado = (c ^ k);
+            /* Se o resultado sair do intervalo imprimível, dobrar com offset */
+            if (resultado < 32 || resultado > 126) {
+                resultado = ((resultado - 32 + 95) % 95) + 32;
+            }
+            texto[i] = (char)resultado;
+        }
+        /* Caracteres não-imprimíveis são preservados sem modificação */
+    }
+}
+
+/* decifrar_xor é idêntica a cifrar_xor — XOR é involução (auto-inversa) */
+void decifrar_xor(char *texto, int chave) {
+    cifrar_xor(texto, chave); /* XOR(XOR(m, k), k) = m */
+}
+
+/* ============================================================================
+ * F13 — CIFRAR/DECIFRAR COM DESPACHO PARA O MÉTODO ATIVO
+ * ============================================================================
+ * Estas funções de fachada despacham para César ou XOR conforme o valor de
+ * metodo_simetrico_atual, centralizando a lógica de selecção do algoritmo.
+ *
+ * PARÂMETROS:
+ *   texto  — String a processar (modificada in-place)
+ *   chave  — Chave de sessão DH (inteiro)
+ *   metodo — 0 para César, 1 para XOR
+ * ============================================================================ */
+void cifrar_mensagem(char *texto, int chave, int metodo) {
+    if (metodo == 1) {
+        cifrar_xor(texto, chave);
+    } else {
+        /* César Generalizado sobre ASCII imprimível [32..126] */
+        char tmp[BUF_SIZE];
+        strncpy(tmp, texto, BUF_SIZE - 1);
+        tmp[BUF_SIZE - 1] = '\0';
+        cesar_process(tmp, texto, chave, 1); /* encrypt=1 */
+    }
+}
+
+void decifrar_mensagem(char *texto, int chave, int metodo) {
+    if (metodo == 1) {
+        decifrar_xor(texto, chave);
+    } else {
+        char tmp[BUF_SIZE];
+        strncpy(tmp, texto, BUF_SIZE - 1);
+        tmp[BUF_SIZE - 1] = '\0';
+        cesar_process(tmp, texto, chave, 0); /* encrypt=0 = decifrar */
+    }
+}
+
+/* ============================================================================
  * FUNÇÕES DE INFRAESTRUTURA DO SERVIDOR
  * ============================================================================
  * Logging, geração de IDs, renderização do cabeçalho, e verificação de
@@ -359,7 +557,9 @@ int check_auth(const char* username, const char* password, char* role) {
                 /* Verificar status da conta */
                 if (strcmp(s, "PENDING") == 0) return -1;  /* Pendente */
                 if (strcmp(s, "INACTIVE") == 0) return -2; /* Inactiva */
-                strcpy(role, r); /* Copiar role (USER ou ADMIN) */
+                /* P2: strncpy + terminação explícita evita overflow se role tiver 20 chars */
+                strncpy(role, r, 19);
+                role[19] = '\0';
                 return 1;        /* Sucesso */
             }
         }
@@ -480,7 +680,8 @@ void list_all(char* response) {
         if (sscanf(line, "%9[^:]:%49[^:]:%49[^:]:%19[^:]:%19s", id, u, p, r,
                    s) == 5) {
             char entry[128];
-            sprintf(entry, " %-3s | %-16s | %-7s | %s\n", id, u, r, s);
+            /* P1: snprintf limita a escrita ao tamanho do buffer entry */
+            snprintf(entry, sizeof(entry), " %-3s | %-16s | %-7s | %s\n", id, u, r, s);
             strncat(response, entry, BUF_SIZE - strlen(response) - 1);
             total++;
         }
@@ -488,7 +689,8 @@ void list_all(char* response) {
     fclose(f);
 
     char footer[64];
-    sprintf(footer, "-----\n Total: %d registo(s)\n", total);
+    /* P1: snprintf garante que footer não excede 64 bytes */
+    snprintf(footer, sizeof(footer), "-----\n Total: %d registo(s)\n", total);
     strncat(response, footer, BUF_SIZE - strlen(response) - 1);
 }
 
@@ -519,7 +721,8 @@ void list_pending(char* response) {
                    s) == 5) {
             if (strcmp(s, "PENDING") == 0) {
                 char entry[128];
-                sprintf(entry, " %-3s | %-16s | %s\n", id, u, s);
+                /* P1: snprintf limita a escrita ao tamanho do buffer entry */
+                snprintf(entry, sizeof(entry), " %-3s | %-16s | %s\n", id, u, s);
                 strncat(response, entry, BUF_SIZE - strlen(response) - 1);
                 total++;
             }
@@ -547,7 +750,8 @@ void check_inbox(const char* username, char* response) {
         return;
     }
 
-    sprintf(response, "=== CAIXA DE ENTRADA DE %s ===\n", username);
+    /* P1: snprintf limita a escrita ao tamanho de response (BUF_SIZE) */
+    snprintf(response, BUF_SIZE, "=== CAIXA DE ENTRADA DE %s ===\n", username);
     char line[512], dest[50], from[50], msg[400];
     int count = 0;
 
@@ -563,10 +767,13 @@ void check_inbox(const char* username, char* response) {
                     strncpy(data_hora, msg + 1, 19);
                     data_hora[19] = '\0';
                     char* texto_real = msg + 22; /* Salta o "[YYYY-MM-DD HH:MM:SS] " */
-                    sprintf(entry, " [%d] De: %-8s | Data: %s | Msg: %s\n", count, from, data_hora, texto_real);
+                    /* P1: snprintf limita a escrita ao tamanho do buffer entry */
+                    snprintf(entry, sizeof(entry), " [%d] De: %-8s | Data: %s | Msg: %s\n",
+                             count, from, data_hora, texto_real);
                 } else {
                     /* Mensagem antiga sem timestamp */
-                    sprintf(entry, " [%d] De: %-8s | Data: (Antiga)          | Msg: %s\n", count, from, msg);
+                    snprintf(entry, sizeof(entry), " [%d] De: %-8s | Data: (Antiga)          | Msg: %s\n",
+                             count, from, msg);
                 }
                 strncat(response, entry, BUF_SIZE - strlen(response) - 1);
             }
@@ -610,7 +817,8 @@ void send_msg(const char* dest, const char* from, const char* msg,
         fclose(f);
     }
     if (!found) {
-        sprintf(response, "MSG_FAIL: Utilizador '%s' nao encontrado.", dest);
+        /* P1: snprintf limita a escrita ao BUF_SIZE */
+        snprintf(response, BUF_SIZE, "MSG_FAIL: Utilizador '%s' nao encontrado.", dest);
         return;
     }
 
@@ -663,10 +871,11 @@ void register_user(const char* username, const char* password, char* response) {
     }
     fprintf(f, "%d:%s:%s:USER:PENDING\n", novo_id, username, password);
     fclose(f);
-    sprintf(response,
-            "REGISTER_OK: Utilizador '%s' registado (ID=%d). Aguarda aprovacao "
-            "do administrador.",
-            username, novo_id);
+    /* P1: snprintf limita a escrita ao BUF_SIZE — username pode ter até 49 chars */
+    snprintf(response, BUF_SIZE,
+             "REGISTER_OK: Utilizador '%s' registado (ID=%d). Aguarda aprovacao "
+             "do administrador.",
+             username, novo_id);
 }
 
 /* ============================================================================
@@ -1043,21 +1252,95 @@ void handle_broadcast(int client_idx, const char* msg, char* response) {
         return;
     }
 
-    /* Construir mensagem para broadcast com data/hora */
-    char bcast_msg[BUF_SIZE];
+    /* ==================================================================
+     * F13 — DECIFRAR A MENSAGEM RECEBIDA DO CLIENTE
+     * ==================================================================
+     * O cliente envia a mensagem já cifrada com o método ativo e a sua
+     * chave de sessão. O servidor decifra-a para obter o texto em claro,
+     * calcula o hash (se integridade_ativa==1) e re-cifra para cada
+     * destinatário com a chave de sessão desse destinatário.
+     * ================================================================== */
+    char msg_clara[BUF_SIZE];
+    strncpy(msg_clara, msg, BUF_SIZE - 1);
+    msg_clara[BUF_SIZE - 1] = '\0';
+
+    /* Extrair e verificar hash de integridade, se presente */
+    char *sep_hash = strstr(msg_clara, "|");
+    if (sep_hash != NULL) {
+        /* Verificar se tem o marcador HASH */
+        char *marcador = strstr(sep_hash, "|HASH:");
+        if (marcador != NULL) {
+            *marcador = '\0'; /* Truncar: msg_clara fica só com a mensagem */
+            unsigned long hash_recebido = strtoul(marcador + 6, NULL, 10);
+            /* Decifrar a parte da mensagem para calcular hash */
+            char msg_decif_temp[BUF_SIZE];
+            strncpy(msg_decif_temp, msg_clara, BUF_SIZE - 1);
+            msg_decif_temp[BUF_SIZE - 1] = '\0';
+            decifrar_mensagem(msg_decif_temp,
+                              (int)clientes[client_idx].chave_sessao,
+                              metodo_simetrico_atual);
+            unsigned long hash_calculado = calcular_hash_djb2(msg_decif_temp);
+            if (integridade_ativa && hash_recebido != hash_calculado) {
+                /* Hash não coincide — avisar remetente mas não bloquear */
+                strcpy(response, "INTEGRITY_WARN: Hash de integridade invalido.");
+                guardar_log("BROADCAST: hash invalido (possivel adulteracao)", 3);
+                /* Não reencaminhar mensagem adulterada */
+                return;
+            }
+        }
+    }
+
+    /* Construir cabeçalho da mensagem de broadcast com data/hora */
     char data_hora[20];
     time_t agora = time(NULL);
     struct tm *t = localtime(&agora);
     strftime(data_hora, sizeof(data_hora), "%H:%M:%S", t);
-    
-    snprintf(bcast_msg, sizeof(bcast_msg), "[%s][%s] %s: %s",
-             data_hora, clientes[client_idx].canal,
-             clientes[client_idx].username, msg);
+
+    /* ==================================================================
+     * F13 — RE-CIFRAR PARA CADA DESTINATÁRIO COM A SUA CHAVE DE SESSÃO
+     * ==================================================================
+     * Cada cliente tem a sua chave DH negociada individualmente.
+     * O servidor precisa de re-cifrar a mensagem para cada destinatário
+     * usando a chave de sessão desse destinatário específico.
+     * ================================================================== */
+    /* Primeiro, obter o texto em claro (decifrar a mensagem do remetente) */
+    char texto_claro[BUF_SIZE];
+    strncpy(texto_claro, msg_clara, BUF_SIZE - 1);
+    texto_claro[BUF_SIZE - 1] = '\0';
+    decifrar_mensagem(texto_claro,
+                      (int)clientes[client_idx].chave_sessao,
+                      metodo_simetrico_atual);
 
     /* Enviar para todos os clientes no mesmo canal */
     for (int i = 0; i < MAX_CLIENTES; i++) {
         if (clientes[i].fd > 0 && i != client_idx && clientes[i].autenticado &&
             strcmp(clientes[i].canal, clientes[client_idx].canal) == 0) {
+
+            /* Re-cifrar com a chave de sessão do destinatário */
+            char msg_para_dest[BUF_SIZE];
+            strncpy(msg_para_dest, texto_claro, BUF_SIZE - 1);
+            msg_para_dest[BUF_SIZE - 1] = '\0';
+            cifrar_mensagem(msg_para_dest,
+                            (int)clientes[i].chave_sessao,
+                            metodo_simetrico_atual);
+
+            /* Anexar hash de integridade à mensagem re-cifrada, se ativo */
+            char bcast_msg[BUF_SIZE];
+            if (integridade_ativa) {
+                unsigned long h = calcular_hash_djb2(msg_para_dest);
+                snprintf(bcast_msg, sizeof(bcast_msg),
+                         "[%s][%s] %s: %s|HASH:%lu",
+                         data_hora, clientes[client_idx].canal,
+                         clientes[client_idx].username,
+                         msg_para_dest, h);
+            } else {
+                snprintf(bcast_msg, sizeof(bcast_msg),
+                         "[%s][%s] %s: %s",
+                         data_hora, clientes[client_idx].canal,
+                         clientes[client_idx].username,
+                         msg_para_dest);
+            }
+
             send(clientes[i].fd, bcast_msg, strlen(bcast_msg), 0);
         }
     }
@@ -1658,8 +1941,12 @@ int main() {
                     long long A = 0; /* Chave pública do cliente */
                     sscanf(buffer + 12, "%lld", &A);
 
-                    /* Gerar chave privada do servidor para este cliente */
-                    int b = rand() % 15 + 2;
+                    /* Gerar chave privada do servidor para este cliente.
+                     * P3: Intervalo [5..22] em vez de [2..16] para mais
+                     * valores distintos de chave de sessão DH.
+                     * NOTA ACADÉMICA: Em produção usaria getrandom() e
+                     * um primo muito maior (ex: 2048 bits via OpenSSL). */
+                    int b = rand() % 18 + 5;  /* b ∈ [5..22] → 18 valores possíveis */
                     /* Calcular chave pública do servidor: B = g^b mod p */
                     long long B = exponenciacao_modular(DH_GERADOR, b, DH_PRIMO);
 
@@ -1674,32 +1961,211 @@ int main() {
                     log_type = 1;
                 }
 
-                /* Handler VIEW_CRYPTO: Consultar parâmetros criptográficos (admin) */
+                /* Handler VIEW_CRYPTO: Consultar parâmetros criptográficos (admin) — F14 */
                 else if (strcmp(buffer, "VIEW_CRYPTO") == 0) {
                     if (!clientes[i].autenticado || !is_admin(clientes[i].username)) {
                         strcpy(response, "CRYPTO_FAIL: Sem permissoes de administrador.");
                         log_type = 3;
                     } else {
-                        /* Contar chaves de sessão ativas */
                         int chaves_ativas = 0;
                         for (int k = 0; k < MAX_CLIENTES; k++) {
                             if (clientes[k].fd > 0 && clientes[k].autenticado &&
-                                clientes[k].chave_sessao > 0) {
+                                clientes[k].chave_sessao > 0)
                                 chaves_ativas++;
-                            }
+                        }
+                        /* Determinar nome do método simétrico activo */
+                        const char* nome_cifra;
+                        if (metodo_simetrico_atual == 1) {
+                            nome_cifra = "XOR (F13 - 2o Simetrico)";
+                        } else if (cipher_mode == 1) {
+                            nome_cifra = "Vigenere";
+                        } else {
+                            nome_cifra = "Cesar Generalizado";
                         }
                         snprintf(response, sizeof(response),
                                  "=== PARAMETROS CRIPTOGRAFICOS DA REDE ===\n"
-                                 " [DH] Primo (p): %d\n"
-                                 " [DH] Gerador (g): %d\n"
-                                 " [RSA] Modulo (n): %d\n"
-                                 " [RSA] Expoente Publico (e): %d\n"
-                                 " [CIFRA] Algoritmo: Cesar (chave = sessao DH)\n"
-                                 " [SESSOES] Chaves de sessao ativas: %d\n"
-                                 "============================================",
-                                 DH_PRIMO, DH_GERADOR, RSA_N, RSA_E, chaves_ativas);
+                                 " [F11] Cifra activa       : %s\n"
+                                 " [F11] Algoritmo default  : Cesar (chave derivada de DH)\n"
+                                 " [F12] DH Primo (p)       : %d\n"
+                                 " [F12] DH Gerador (g)     : %d\n"
+                                 " [F12] Sessoes DH activas : %d\n"
+                                 " [F13] Metodo Simetrico   : %d (0=Cesar, 1=XOR)\n"
+                                 " [F13] 2o Simetrico       : Vigenere (chave: %s)\n"
+                                 " [F13] Assimetrico        : Toy RSA (e=%d, d=%d, n=%d)\n"
+                                 " [F13] Hash integridade   : %s (djb2-32, toggle=TOGGLE_INTEGRITY)\n"
+                                 " [F14] Chave propria DH   : K=%lld\n"
+                                 "==========================================",
+                                 nome_cifra,
+                                 DH_PRIMO, DH_GERADOR, chaves_ativas,
+                                 metodo_simetrico_atual,
+                                 chave_vigenere,
+                                 RSA_E, RSA_D, RSA_N,
+                                 integridade_ativa ? "ACTIVO" : "INACTIVO",
+                                 clientes[i].chave_sessao);
                         snprintf(log_msg, sizeof(log_msg),
                                  "VIEW_CRYPTO: por '%s'", clientes[i].username);
+                        log_type = 2;
+                    }
+                }
+
+                /* Handler SET_CIPHER: alternar cifra simétrica (admin) — F13
+                 *
+                 * Aceita dois formatos:
+                 *   SET_CIPHER 0   → César Generalizado (compatibilidade)
+                 *   SET_CIPHER 1   → XOR (novo 2.º método simétrico)
+                 *   SET_CIPHER CESAR    → César (legado textual)
+                 *   SET_CIPHER VIGENERE → Vigenère (legado textual)
+                 */
+                else if (strncmp(buffer, "SET_CIPHER ", 11) == 0) {
+                    if (!clientes[i].autenticado || !is_admin(clientes[i].username)) {
+                        strcpy(response, "CIPHER_FAIL: Sem permissoes de administrador.");
+                        log_type = 3;
+                    } else {
+                        char modo[20];
+                        sscanf(buffer + 11, "%19s", modo);
+                        if (strcmp(modo, "0") == 0 || strcmp(modo, "CESAR") == 0) {
+                            /* Método 0: Cifra de César Generalizado */
+                            cipher_mode = 0;
+                            metodo_simetrico_atual = 0;
+                            snprintf(response, sizeof(response),
+                                     "CIPHER_OK: Metodo alterado para Cesar (0). Broadcasts passam a usar Cesar Generalizado.");
+                        } else if (strcmp(modo, "1") == 0 || strcmp(modo, "XOR") == 0) {
+                            /* Método 1: Cifra XOR (novo 2.º simétrico F13) */
+                            cipher_mode = 1;
+                            metodo_simetrico_atual = 1;
+                            snprintf(response, sizeof(response),
+                                     "CIPHER_OK: Metodo alterado para XOR (1). Broadcasts passam a usar XOR.");
+                        } else if (strcmp(modo, "VIGENERE") == 0) {
+                            /* Vigenère mantido por retrocompatibilidade */
+                            cipher_mode = 1;
+                            snprintf(response, sizeof(response),
+                                     "CIPHER_OK: Cifra alterada para Vigenere (chave=%s).", chave_vigenere);
+                        } else {
+                            snprintf(response, sizeof(response),
+                                     "CIPHER_FAIL: Modo desconhecido '%s'. Use 0 (Cesar), 1 (XOR), CESAR ou VIGENERE.",
+                                     modo);
+                        }
+                        snprintf(log_msg, sizeof(log_msg),
+                                 "SET_CIPHER: '%s' modo=%s (metodo_atual=%d)",
+                                 clientes[i].username, modo, metodo_simetrico_atual);
+                        log_type = 1;
+                    }
+                }
+
+                /* Handler TOGGLE_INTEGRITY: activar/desactivar verificação de hash (admin) — F13
+                 *
+                 * Alterna integridade_ativa entre 0 e 1.
+                 * Quando activo: broadcasts incluem |HASH:<djb2> e o servidor
+                 * rejeita mensagens com hash inválido (responde INTEGRITY_WARN).
+                 * Retrocompatibilidade: mensagens sem hash são aceites com aviso
+                 * se integridade estiver activa (não bloqueia clientes antigos).
+                 */
+                else if (strcmp(buffer, "TOGGLE_INTEGRITY") == 0) {
+                    if (!clientes[i].autenticado || !is_admin(clientes[i].username)) {
+                        strcpy(response, "INTEGRITY_FAIL: Sem permissoes de administrador.");
+                        log_type = 3;
+                    } else {
+                        integridade_ativa = !integridade_ativa;
+                        snprintf(response, sizeof(response),
+                                 "INTEGRITY_OK: Verificacao de hash %s.",
+                                 integridade_ativa ? "ativada" : "desativada");
+                        snprintf(log_msg, sizeof(log_msg),
+                                 "TOGGLE_INTEGRITY: '%s' → %s",
+                                 clientes[i].username,
+                                 integridade_ativa ? "ON" : "OFF");
+                        log_type = 1;
+                    }
+                }
+
+                /* Handler SET_VKEY: definir chave Vigenère (admin) — F13 */
+                else if (strncmp(buffer, "SET_VKEY ", 9) == 0) {
+                    if (!clientes[i].autenticado || !is_admin(clientes[i].username)) {
+                        strcpy(response, "VKEY_FAIL: Sem permissoes de administrador.");
+                        log_type = 3;
+                    } else {
+                        char nova_chave[64];
+                        sscanf(buffer + 9, "%63s", nova_chave);
+                        strncpy(chave_vigenere, nova_chave, sizeof(chave_vigenere) - 1);
+                        chave_vigenere[sizeof(chave_vigenere) - 1] = '\0';
+                        snprintf(response, sizeof(response),
+                                 "VKEY_OK: Chave Vigenere actualizada para '%s'.", chave_vigenere);
+                        snprintf(log_msg, sizeof(log_msg),
+                                 "SET_VKEY: '%s' definiu chave='%s'", clientes[i].username, chave_vigenere);
+                        log_type = 1;
+                    }
+                }
+
+                /* Handler HASH_ON: activar hash de integridade (admin) — F13 */
+                else if (strcmp(buffer, "HASH_ON") == 0) {
+                    if (!clientes[i].autenticado || !is_admin(clientes[i].username)) {
+                        strcpy(response, "HASH_FAIL: Sem permissoes de administrador.");
+                        log_type = 3;
+                    } else {
+                        hash_integridade = 1;
+                        strcpy(response, "HASH_OK: Hash de integridade djb2 ACTIVADO.");
+                        snprintf(log_msg, sizeof(log_msg),
+                                 "HASH_ON: por '%s'", clientes[i].username);
+                        log_type = 1;
+                    }
+                }
+
+                /* Handler HASH_OFF: desactivar hash de integridade (admin) — F13 */
+                else if (strcmp(buffer, "HASH_OFF") == 0) {
+                    if (!clientes[i].autenticado || !is_admin(clientes[i].username)) {
+                        strcpy(response, "HASH_FAIL: Sem permissoes de administrador.");
+                        log_type = 3;
+                    } else {
+                        hash_integridade = 0;
+                        strcpy(response, "HASH_OK: Hash de integridade djb2 DESACTIVADO.");
+                        snprintf(log_msg, sizeof(log_msg),
+                                 "HASH_OFF: por '%s'", clientes[i].username);
+                        log_type = 1;
+                    }
+                }
+
+                /* Handler SEND_MSG_RSA: enviar mensagem privada cifrada com RSA toy — F13 */
+                else if (strncmp(buffer, "SEND_MSG_RSA ", 13) == 0) {
+                    char dest[50], from[50], msg[400], msg_cifrada[BUF_SIZE];
+                    sscanf(buffer + 13, "%49s %49s %399[^\n]", dest, from, msg);
+                    if (!clientes[i].autenticado ||
+                        strcmp(clientes[i].username, from) != 0) {
+                        strcpy(response, "ERRO: Remetente forjado ou sessao invalida.");
+                        log_type = 3;
+                    } else {
+                        /* Cifrar mensagem caracter a caracter com RSA */
+                        rsa_encrypt_str(msg, msg_cifrada, sizeof(msg_cifrada));
+
+                        /* Guardar no inbox com prefixo [RSA] */
+                        FILE* f = fopen(INBOX_FILE, "a");
+                        if (!f) {
+                            strcpy(response, "ERRO: Nao foi possivel guardar mensagem.");
+                        } else {
+                            char data_hora[20];
+                            time_t agora = time(NULL);
+                            struct tm *t = localtime(&agora);
+                            strftime(data_hora, sizeof(data_hora), "%Y-%m-%d %H:%M:%S", t);
+                            fprintf(f, "%s:%s:[%s] [RSA] %s\n", dest, from, data_hora, msg_cifrada);
+                            fclose(f);
+                            snprintf(response, sizeof(response),
+                                     "MSG_SENT: Mensagem RSA entregue na caixa de %s.", dest);
+                        }
+                        snprintf(log_msg, sizeof(log_msg),
+                                 "SEND_MSG_RSA: de '%s' para '%s'", from, dest);
+                        log_type = 1;
+                    }
+                }
+
+                /* Handler GET_CIPHER: consultar cifra activa (qualquer utilizador autenticado) — F14 */
+                else if (strcmp(buffer, "GET_CIPHER") == 0) {
+                    if (!clientes[i].autenticado) {
+                        strcpy(response, "CIPHER_FAIL: Nao autenticado.");
+                        log_type = 3;
+                    } else {
+                        const char* nome_cifra = (cipher_mode == 1) ? "Vigenere" : "Cesar Generalizado";
+                        snprintf(response, sizeof(response),
+                                 "CIPHER_INFO: Cifra activa = %s", nome_cifra);
+                        snprintf(log_msg, sizeof(log_msg),
+                                 "GET_CIPHER: por '%s'", clientes[i].username);
                         log_type = 2;
                     }
                 }

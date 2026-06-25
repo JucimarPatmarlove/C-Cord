@@ -290,6 +290,123 @@ void decifrar_cesar(char *texto, int chave) {
 }
 
 /* ============================================================================
+ * F13 — ESTADO CRIPTOGRÁFICO LOCAL DO CLIENTE
+ * ============================================================================
+ * metodo_simetrico_local : 0=César, 1=XOR (sincronizado com servidor via SET_CIPHER)
+ * integridade_local      : 1=anexar/verificar hash DJB2, 0=desativado
+ * ============================================================================ */
+int cipher_mode_local      = 0;          /* 0=César, 1=Vigenère (legado) */
+char chave_vigenere_local[64] = "ccord"; /* Chave Vigenère */
+int hash_activo            = 0;          /* 1 = djb2 appended antes de enviar (legado) */
+int metodo_simetrico_local = 0;          /* 0=César, 1=XOR (F13 — novo 2.º simétrico) */
+int integridade_local      = 1;          /* 1=verificar hash DJB2, 0=desativado */
+
+/* ============================================================================
+ * F13 SIMÉTRICO 2: CIFRA DE VIGENÈRE (cliente)
+ *
+ * Actua sobre ASCII imprimível [32..126].
+ * encrypt=1 cifra, encrypt=0 decifra.
+ * ============================================================================ */
+void vigenere_process_c(const char* in, char* out, const char* key, int encrypt) {
+    int keylen = (int)strlen(key);
+    if (keylen == 0) { strcpy(out, in); return; }
+    int j = 0;
+    for (int i = 0; in[i] != '\0'; i++) {
+        unsigned char c = (unsigned char)in[i];
+        if (c >= 32 && c <= 126) {
+            char kc = key[j % keylen];
+            int shift;
+            if      (kc >= 'A' && kc <= 'Z') shift = kc - 'A';
+            else if (kc >= 'a' && kc <= 'z') shift = kc - 'a';
+            else                              shift = kc % 26;
+            int dir = encrypt ? shift : (95 - (shift % 95));
+            out[i] = (char)(((c - 32 + dir) % 95) + 32);
+            j++;
+        } else {
+            out[i] = in[i];
+        }
+    }
+    out[strlen(in)] = '\0';
+}
+
+/* ============================================================================
+ * F13 ASSIMÉTRICO: TOY RSA — string → inteiros (cliente)
+ * ============================================================================ */
+void rsa_encrypt_str_c(const char* in, char* out, int out_sz) {
+    out[0] = '\0';
+    char tmp[16];
+    for (int i = 0; in[i] != '\0'; i++) {
+        long long M = (unsigned char)in[i];
+        long long C = exponenciacao_modular(M, RSA_E, RSA_N);
+        snprintf(tmp, sizeof(tmp), "%lld", C);
+        if (i > 0) strncat(out, " ", out_sz - (int)strlen(out) - 1);
+        strncat(out, tmp, out_sz - (int)strlen(out) - 1);
+    }
+}
+
+/* ============================================================================
+ * F13 HASH INTEGRIDADE: djb2 — append à mensagem antes de enviar
+ * ============================================================================ */
+void append_hash(char* msg, int msg_sz) {
+    unsigned long h = calcular_hash_djb2(msg);
+    char htag[32];
+    snprintf(htag, sizeof(htag), "|HASH:%lu", h);
+    strncat(msg, htag, msg_sz - (int)strlen(msg) - 1);
+}
+
+/* ============================================================================
+ * F13 — CIFRA XOR (cliente) — 2.º MÉTODO SIMÉTRICO
+ * Idêntica à do servidor: XOR é involução, cifrar == decifrar.
+ * Apenas caracteres imprimíveis [32..126] são processados.
+ * ============================================================================ */
+void cifrar_xor_c(char *texto, int chave) {
+    int k = ((chave % 94) + 94) % 94;
+    if (k == 0) k = 1;
+    for (int i = 0; texto[i] != '\0'; i++) {
+        unsigned char c = (unsigned char)texto[i];
+        if (c >= 32 && c <= 126) {
+            int r = (c ^ k);
+            if (r < 32 || r > 126) r = ((r - 32 + 95) % 95) + 32;
+            texto[i] = (char)r;
+        }
+    }
+}
+
+void decifrar_xor_c(char *texto, int chave) {
+    cifrar_xor_c(texto, chave); /* XOR é auto-inverso */
+}
+
+/* ============================================================================
+ * F13 — CIFRAR/DECIFRAR COM DESPACHO PARA O MÉTODO ATIVO (cliente)
+ * Usa metodo_simetrico_local: 0=César, 1=XOR.
+ * ============================================================================ */
+void cifrar_mensagem_c(char *texto, int chave) {
+    if (metodo_simetrico_local == 1) {
+        cifrar_xor_c(texto, chave);
+    } else {
+        cifrar_cesar(texto, chave);
+    }
+}
+
+void decifrar_mensagem_c(char *texto, int chave) {
+    if (metodo_simetrico_local == 1) {
+        decifrar_xor_c(texto, chave);
+    } else {
+        decifrar_cesar(texto, chave);
+    }
+}
+
+/* Cifrar com o algoritmo activo — mantido para compatibilidade legado */
+void cifrar_activo(char* texto, int chave_dh) {
+    cifrar_mensagem_c(texto, chave_dh);
+}
+
+/* Decifrar com o algoritmo activo — mantido para compatibilidade legado */
+void decifrar_activo(char* texto, int chave_dh) {
+    decifrar_mensagem_c(texto, chave_dh);
+}
+
+/* ============================================================================
  * FUNÇÃO: iniciar_diffie_hellman()
  * ============================================================================
  * OBJETIVO: Estabelecer chave de sessão partilhada via protocolo Diffie-Hellman.
@@ -304,8 +421,11 @@ void decifrar_cesar(char *texto, int chave) {
  * ============================================================================
  */
 void iniciar_diffie_hellman(void) {
-    /* Gerar chave privada aleatória */
-    privado_cliente = rand() % 15 + 2;
+    /* Gerar chave privada aleatória.
+     * P3: Intervalo [5..22] em vez de [2..16] para mais valores distintos.
+     * Com DH_PRIMO=23, o grupo multiplicativo mod 23 tem ordem 22,
+     * portanto qualquer expoente em [1..22] é válido. */
+    privado_cliente = rand() % 18 + 5;  /* a ∈ [5..22] → 18 valores possíveis */
 
     /* Calcular chave pública do cliente: A = g^a mod p */
     long long A = exponenciacao_modular(DH_GERADOR, privado_cliente, DH_PRIMO);
@@ -1148,20 +1268,41 @@ void submenu_canais(void) {
                         break;
                     }
                     incoming[n] = '\0';
-                    
-                    /* Etapa 4: Decifrar mensagem recebida (broadcast ou echo) */
+
+                    /* F13: Localizar a parte cifrada (depois do ": ") e separar hash */
                     char *sep = strstr(incoming, ": ");
                     if (sep != NULL) {
                         char *msg_cifrada = sep + 2;
-                        decifrar_cesar(msg_cifrada, (int)chave_sessao);
+
+                        /* Separar hash de integridade, se presente */
+                        char *pipe = strstr(msg_cifrada, "|HASH:");
+                        unsigned long hash_recebido = 0;
+                        int tem_hash = 0;
+                        if (pipe != NULL) {
+                            hash_recebido = strtoul(pipe + 6, NULL, 10);
+                            *pipe = '\0'; /* Truncar: msg_cifrada fica só com o texto cifrado */
+                            tem_hash = 1;
+                        }
+
+                        /* Verificar hash ANTES de decifrar (hash é sobre texto cifrado) */
+                        if (integridade_local && tem_hash) {
+                            unsigned long hash_calc = calcular_hash_djb2(msg_cifrada);
+                            if (hash_calc != hash_recebido) {
+                                printf("\r\033[K");
+                                printf(" \033[1;31m[!] INTEGRIDADE VIOLADA\033[0m "
+                                       "- mensagem descartada (hash inválido)\n");
+                                printf(" [%s] Sua mensagem: ", current_user);
+                                fflush(stdout);
+                                continue;
+                            }
+                        }
+
+                        /* Decifrar com o método activo */
+                        decifrar_mensagem_c(msg_cifrada, (int)chave_sessao);
                     }
-                    
-                    /* Carriage return '\r' retorna o cursor ao ínicio da linha,
-                     * e '\033[K' apaga todo o texto dessa mesma linha. */
+
                     printf("\r\033[K");
                     imprimir_resposta(incoming);
-                    
-                    /* Reimprime o prompt para o utilizador poder voltar a digitar. */
                     printf(" [%s] Sua mensagem: ", current_user);
                     fflush(stdout);
                     continue;
@@ -1183,15 +1324,25 @@ void submenu_canais(void) {
                     }
 
                     if (strlen(input) > 0) {
-                        /* Etapa 4: Cifrar mensagem antes de enviar */
-                        cifrar_cesar(input, (int)chave_sessao);
-                        
+                        /* F13: Cifrar mensagem com o método activo */
+                        cifrar_mensagem_c(input, (int)chave_sessao);
+
+                        /* F13: Anexar hash DJB2 se integridade ativa
+                         * O hash é calculado sobre o texto JA CIFRADO,
+                         * igual ao que o servidor irá receber e verificar. */
+                        if (integridade_local) {
+                            unsigned long h = calcular_hash_djb2(input);
+                            char htag[32];
+                            snprintf(htag, sizeof(htag), "|HASH:%lu", h);
+                            strncat(input, htag, sizeof(input) - strlen(input) - 1);
+                        }
+
                         snprintf(cmd, sizeof(cmd), "BROADCAST %s", input);
                         if (send(server_fd, cmd, strlen(cmd), 0) < 0) {
                             printf(" \033[1;31m[ERRO]\033[0m Falha ao enviar.\n");
                             break;
                         }
-                        /* Ler resposta BCAST_SENT / ECHO com timeout */
+                        /* Ler resposta BCAST_SENT / INTEGRITY_WARN com timeout */
                         memset(res, 0, BUF_SIZE);
                         struct timeval tv = {2, 0};
                         fd_set rfd;
@@ -1201,16 +1352,16 @@ void submenu_canais(void) {
                             int n = recv(server_fd, res, BUF_SIZE - 1, 0);
                             if (n > 0) {
                                 res[n] = '\0';
-                                /* Etapa 4: Decifrar echo se contiver ": " */
-                                char *echo_sep = strstr(res, ": ");
-                                if (echo_sep != NULL) {
-                                    decifrar_cesar(echo_sep + 2, (int)chave_sessao);
-                                }
                                 if (strstr(res, "BCAST_SENT")) {
                                     printf(
                                         " \033[1;32m[OK]\033[0m Mensagem "
                                         "enviada para %s\n",
                                         nome_canal);
+                                } else if (strstr(res, "INTEGRITY_WARN")) {
+                                    /* Servidor rejeitou por hash inválido */
+                                    printf(
+                                        " \033[1;31m[!] INTEGRIDADE REJEITADA\033[0m "
+                                        "pelo servidor.\n");
                                 }
                             }
                         }
@@ -1469,35 +1620,45 @@ void submenu_gestao_canais(void) {
 /* ============================================================================
  * FUNÇÃO: submenu_seguranca()
  * ============================================================================
- * OBJETIVO: Painel de administração de segurança (Dashboard SecOps).
- * Imprime informações simuladas sobre as políticas activas do servidor e
- * oferece opções para consultar ficheiros de logs e observar as chaves
- * e parâmetros matemáticos em uso na rede (Etapa 4 - Criptografia).
- * ============================================================================
- */
+ * OBJETIVO: Painel de administração de segurança — Etapa 4 (F13 + F14).
+ *
+ * OPÇÕES (ADMIN):
+ *   [1] Ver Logs de Acesso (VIEW_LOGS)
+ *   [2] Consultar Parâmetros Criptográficos (VIEW_CRYPTO) — F14
+ *   [3] Alternar Cifra Simétrica (SET_CIPHER CESAR|VIGENERE) — F13
+ *   [4] Definir Chave Vigenère (SET_VKEY <chave>) — F13
+ *   [5] Activar/Desactivar Hash de Integridade (HASH_ON|OFF) — F13
+ *   [6] Enviar Mensagem Privada com RSA (SEND_MSG_RSA) — F13
+ *   [7] Consultar Cifra Activa (GET_CIPHER) — F14
+ *   [0] Voltar
+ * ============================================================================ */
 void submenu_seguranca(void) {
     int sair = 0;
     while (!sair) {
-        draw_header(2, "Segurança e Auditoria");
+        draw_header(2, "Segurança / Criptografia (F13-F14)");
 
-        printf("\n [POLÍTICAS DE SEGURANÇA]\n");
-        printf(" > Autenticação em 2 passos: [ DESATIVADO ]\n");
-        printf(" > Requisito de senha forte: [ ATIVO ]\n");
-        printf(" > Encriptação de mensagens: [ ATIVO ]\n");
-        printf(" > Limite de tentativas falhas: 5 por sessão\n");
-        printf(" > Retenção de logs: 30 dias\n");
-
-        printf("\n [ÚLTIMO LOGIN DO ADMIN]\n");
-        time_t agora = time(NULL);
-        struct tm* t = localtime(&agora);
-        printf(" %04d-%02d-%02d às %02d:%02d:%02d\n", t->tm_year + 1900,
-               t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
+        /* Estado local resumido — mostra método simétrico activo e integridade */
+        const char* cifra_nome;
+        if (metodo_simetrico_local == 1)
+            cifra_nome = "XOR (F13 - 2.º Simétrico)";
+        else
+            cifra_nome = (cipher_mode_local == 1) ? "Vigenère" : "César Generalizado";
+        printf("\n [ESTADO CRIPTOGRÁFICO LOCAL]\n");
+        printf(" > Método simétrico : \033[1;33m%s\033[0m\n", cifra_nome);
+        printf(" > Chave Vigenère   : \033[1;33m%s\033[0m\n", chave_vigenere_local);
+        printf(" > Hash integridade : \033[1;33m%s\033[0m  (djb2-32)\n",
+               integridade_local ? "ACTIVO" : "INACTIVO");
+        printf(" > Chave DH sessão  : \033[1;33m%lld\033[0m\n", chave_sessao);
 
         printf("\n----------------------------------------------------\n");
-        printf(" [ 1 ] Ver Logs de Acesso\n");
-        printf(" [ 2 ] Ver Histórico de Transações\n");
-        printf(" [ 3 ] Ativar 2FA para Admin\n");
-        printf(" [ 4 ] Consultar Parâmetros Criptográficos da Rede\n");
+        printf(" [ 1 ] Ver Logs de Acesso do Servidor\n");
+        printf(" [ 2 ] Consultar Parâmetros Criptográficos (F14)\n");
+        printf(" [ 3 ] Alternar Cifra Simétrica (César / Vigenère) (F13)\n");
+        printf(" [ 4 ] Definir Chave Vigenère (F13)\n");
+        printf(" [ 5 ] Activar / Desactivar Hash (legado HASH_ON/OFF) (F13)\n");
+        printf(" [ 6 ] Enviar Mensagem Privada com RSA Toy (F13)\n");
+        printf(" [ 7 ] Consultar Cifra Activa no Servidor (F14)\n");
+        printf(" [ 8 ] Configurar Cifra e Integridade (F13) [NOVO]\n");
         printf(" [ 0 ] Voltar ao Menu Principal\n");
         printf("----------------------------------------------------\n");
         printf(" Escolha: ");
@@ -1506,42 +1667,198 @@ void submenu_seguranca(void) {
         if (scanf("%d", &opt) != 1) opt = -1;
         clear_buffer();
 
+        char cmd[BUF_SIZE], res[BUF_SIZE];
+
         switch (opt) {
-            case 1:
-                printf("\n [LOGS DE ACESSO - ÚLTIMAS 10 SESSÕES]\n");
-                printf(
-                    " 1. admin - 2026-05-22 14:30:45 - 127.0.0.1 [ LOGIN OK "
-                    "]\n");
-                printf(
-                    " 2. user1 - 2026-05-22 13:15:22 - 127.0.0.1 [ LOGIN OK "
-                    "]\n");
-                printf(
-                    " 3. guest - 2026-05-22 11:45:00 - 127.0.0.1 [ FAILED "
-                    "ATTEMPT ]\n");
-                aguardar_enter();
-                break;
 
-            case 2:
-                printf("\n [HISTÓRICO DE TRANSAÇÕES]\n");
-                printf(" [CREATE] Canal #projecto criado por admin\n");
-                printf(" [UPDATE] Utilizador user1 aprovado por admin\n");
-                printf(" [DELETE] Canal #test removido por admin\n");
-                aguardar_enter();
-                break;
-
-            case 3:
-                printf("\n [2FA PARA ADMINISTRADOR]\n");
-                printf(" Configurar 2FA via SMS/Email (Em desenvolvimento)\n");
-                aguardar_enter();
-                break;
-
-            case 4: {
-                /* Etapa 4: Consultar parâmetros criptográficos da rede */
-                char res_crypto[BUF_SIZE];
-                enviar_e_receber("VIEW_CRYPTO", res_crypto, BUF_SIZE);
+            /* ---- [1] LOGS ---- */
+            case 1: {
+                draw_header(2, "Logs de Acesso");
+                snprintf(cmd, sizeof(cmd), "VIEW_LOGS %s", current_user);
+                enviar_e_receber(cmd, res, BUF_SIZE);
                 printf("\n");
-                imprimir_resposta(res_crypto);
+                imprimir_resposta(res);
                 aguardar_enter();
+                break;
+            }
+
+            /* ---- [2] VIEW_CRYPTO (F14) ---- */
+            case 2: {
+                draw_header(2, "Parâmetros Criptográficos (F14)");
+                enviar_e_receber("VIEW_CRYPTO", res, BUF_SIZE);
+                printf("\n");
+                imprimir_resposta(res);
+                aguardar_enter();
+                break;
+            }
+
+            /* ---- [3] SET_CIPHER (F13) ---- */
+            case 3: {
+                draw_header(2, "Alternar Cifra Simétrica (F13)");
+                printf("\n Cifra activa: \033[1;33m%s\033[0m\n", cifra_nome);
+                printf("\n----------------------------------------------------\n");
+                printf(" [ 1 ] César Generalizado (chave derivada de DH)\n");
+                printf(" [ 2 ] Vigenère (chave configurável)\n");
+                printf(" [ 0 ] Cancelar\n");
+                printf("----------------------------------------------------\n");
+                printf(" Escolha: ");
+                int sub = -1;
+                if (scanf("%d", &sub) != 1) sub = -1;
+                clear_buffer();
+
+                if (sub == 1) {
+                    enviar_e_receber("SET_CIPHER CESAR", res, BUF_SIZE);
+                    imprimir_resposta(res);
+                    if (strstr(res, "CIPHER_OK")) {
+                        cipher_mode_local = 0;
+                        metodo_simetrico_local = 0;
+                    }
+                } else if (sub == 2) {
+                    enviar_e_receber("SET_CIPHER VIGENERE", res, BUF_SIZE);
+                    imprimir_resposta(res);
+                    if (strstr(res, "CIPHER_OK")) cipher_mode_local = 1;
+                }
+                aguardar_enter();
+                break;
+            }
+
+            /* ---- [4] SET_VKEY (F13) ---- */
+            case 4: {
+                draw_header(2, "Definir Chave Vigenère (F13)");
+                printf("\n Chave actual: \033[1;33m%s\033[0m\n", chave_vigenere_local);
+                printf(" Nova chave (só letras, máx 63): ");
+                char nova[64];
+                if (scanf("%63s", nova) != 1) { clear_buffer(); break; }
+                clear_buffer();
+                snprintf(cmd, sizeof(cmd), "SET_VKEY %s", nova);
+                enviar_e_receber(cmd, res, BUF_SIZE);
+                imprimir_resposta(res);
+                if (strstr(res, "VKEY_OK"))
+                    strncpy(chave_vigenere_local, nova, sizeof(chave_vigenere_local) - 1);
+                aguardar_enter();
+                break;
+            }
+
+            /* ---- [5] HASH ON/OFF (F13) ---- */
+            case 5: {
+                draw_header(2, "Hash de Integridade djb2 (F13)");
+                printf("\n Estado actual: \033[1;33m%s\033[0m\n",
+                       hash_activo ? "ACTIVO" : "INACTIVO");
+                printf("\n----------------------------------------------------\n");
+                printf(" [ 1 ] Activar  (djb2 appended em mensagens)\n");
+                printf(" [ 2 ] Desactivar\n");
+                printf(" [ 0 ] Cancelar\n");
+                printf("----------------------------------------------------\n");
+                printf(" Escolha: ");
+                int sub2 = -1;
+                if (scanf("%d", &sub2) != 1) sub2 = -1;
+                clear_buffer();
+
+                if (sub2 == 1) {
+                    enviar_e_receber("HASH_ON", res, BUF_SIZE);
+                    imprimir_resposta(res);
+                    if (strstr(res, "HASH_OK")) hash_activo = 1;
+                } else if (sub2 == 2) {
+                    enviar_e_receber("HASH_OFF", res, BUF_SIZE);
+                    imprimir_resposta(res);
+                    if (strstr(res, "HASH_OK")) hash_activo = 0;
+                }
+                aguardar_enter();
+                break;
+            }
+
+            /* ---- [6] SEND_MSG_RSA (F13) ---- */
+            case 6: {
+                draw_header(2, "Mensagem Privada com RSA Toy (F13)");
+                printf("\n [RSA] e=%d  d=%d  n=%d\n", RSA_E, RSA_D, RSA_N);
+                printf(" Destinatário: ");
+                char dest[50], msg_rsa[400], msg_cifrada_rsa[BUF_SIZE];
+                if (scanf("%49s", dest) != 1) { clear_buffer(); break; }
+                clear_buffer();
+                printf(" Mensagem: ");
+                if (!fgets(msg_rsa, sizeof(msg_rsa), stdin)) break;
+                msg_rsa[strcspn(msg_rsa, "\n")] = '\0';
+
+                /* Cifrar localmente para mostrar ao utilizador */
+                rsa_encrypt_str_c(msg_rsa, msg_cifrada_rsa, sizeof(msg_cifrada_rsa));
+                printf("\n \033[1;33m[RSA PREVIEW]\033[0m Texto cifrado (primeiros 60 chars):\n");
+                printf(" %.60s...\n", msg_cifrada_rsa);
+
+                printf("\n [A ENVIAR via SEND_MSG_RSA...]\n");
+                snprintf(cmd, sizeof(cmd), "SEND_MSG_RSA %s %s %.390s",
+                         dest, current_user, msg_rsa);
+                enviar_e_receber(cmd, res, BUF_SIZE);
+                imprimir_resposta(res);
+                aguardar_enter();
+                break;
+            }
+
+            /* ---- [7] GET_CIPHER (F14) ---- */
+            case 7: {
+                draw_header(2, "Cifra Activa no Servidor (F14)");
+                enviar_e_receber("GET_CIPHER", res, BUF_SIZE);
+                printf("\n");
+                imprimir_resposta(res);
+                aguardar_enter();
+                break;
+            }
+
+            /* ---- [8] CONFIGURAR CIFRA E INTEGRIDADE (F13 — NOVO) ---- */
+            case 8: {
+                int sair8 = 0;
+                while (!sair8) {
+                    draw_header(2, "Configurar Cifra e Integridade (F13)");
+                    const char* met_nome8 = (metodo_simetrico_local == 1) ? "XOR" : "César";
+                    printf("\n [CONFIGURAÇÃO ACTUAL]\n");
+                    printf(" > Método simétrico : \033[1;33m%d (%s)\033[0m\n",
+                           metodo_simetrico_local, met_nome8);
+                    printf(" > Integridade      : \033[1;33m%s\033[0m (hash DJB2)\n",
+                           integridade_local ? "ACTIVA" : "INACTIVA");
+                    printf("\n----------------------------------------------------\n");
+                    printf(" [ 1 ] Alterar método simétrico (0=César, 1=XOR)\n");
+                    printf(" [ 2 ] Ativar/Desativar verificação de integridade\n");
+                    printf(" [ 0 ] Voltar\n");
+                    printf("----------------------------------------------------\n");
+                    printf(" Escolha: ");
+                    int s8 = -1;
+                    if (scanf("%d", &s8) != 1) s8 = -1;
+                    clear_buffer();
+
+                    if (s8 == 1) {
+                        /* Alterar método simétrico via SET_CIPHER 0|1 */
+                        printf("\n Método (0=César, 1=XOR): ");
+                        int novo_met = -1;
+                        if (scanf("%d", &novo_met) != 1) novo_met = -1;
+                        clear_buffer();
+                        if (novo_met == 0 || novo_met == 1) {
+                            snprintf(cmd, sizeof(cmd), "SET_CIPHER %d", novo_met);
+                            enviar_e_receber(cmd, res, BUF_SIZE);
+                            imprimir_resposta(res);
+                            /* Sincronizar variável local com servidor */
+                            if (strstr(res, "CIPHER_OK")) {
+                                metodo_simetrico_local = novo_met;
+                                cipher_mode_local = novo_met;
+                            }
+                        } else {
+                            printf(" \033[1;31m[ERRO]\033[0m Método inválido (use 0 ou 1).\n");
+                        }
+                        aguardar_enter();
+                    } else if (s8 == 2) {
+                        /* Alternar integridade via TOGGLE_INTEGRITY */
+                        enviar_e_receber("TOGGLE_INTEGRITY", res, BUF_SIZE);
+                        imprimir_resposta(res);
+                        /* Sincronizar variável local com resposta do servidor */
+                        if (strstr(res, "INTEGRITY_OK")) {
+                            integridade_local = !integridade_local;
+                        }
+                        aguardar_enter();
+                    } else if (s8 == 0) {
+                        sair8 = 1;
+                    } else {
+                        printf(" Opção inválida.\n");
+                        sleep(1);
+                    }
+                }
                 break;
             }
 
@@ -1816,7 +2133,13 @@ int main(int argc, char* argv[]) {
     srand(time(NULL));
 
     const char* server_ip = argv[1];
+    /* P4: Validar que o porto está no intervalo TCP válido [1..65535]
+     * atoi() retorna 0 para strings inválidas, que também seria rejeitado. */
     int server_port = atoi(argv[2]);
+    if (server_port <= 0 || server_port > 65535) {
+        fprintf(stderr, "ERRO: Porto inválido '%s'. Use um valor entre 1 e 65535.\n", argv[2]);
+        return 1;
+    }
 
     /* Resolver hostname */
     struct hostent* he = gethostbyname(server_ip);
